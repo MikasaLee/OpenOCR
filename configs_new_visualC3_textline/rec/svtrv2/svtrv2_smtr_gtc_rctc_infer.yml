@@ -1,15 +1,15 @@
 Global:
   device: gpu
-  epoch_num: 100
+  epoch_num: 20
   log_smooth_window: 20
   print_batch_step: 10
   output_dir: ./output_bctr/svtrv2_smtr_gtc_rctc_ch
   save_epoch_step: [15, 1]
   # evaluation is run every 2000 iterations
-  eval_batch_step: [0, 2000]
+  eval_batch_step: [0, 500]
   eval_epoch_step: [0, 1]
-  cal_metric_during_train: False
-  pretrained_model:
+  cal_metric_during_train: True
+  pretrained_model: ./output_bctr/svtrv2_smtr_gtc_rctc_ch/best.pth
   checkpoints:
   use_tensorboard: false
   infer_img:
@@ -49,7 +49,7 @@ Architecture:
     feat2d: True
   Decoder:
     name: GTCDecoder
-    infer_gtc: True
+    infer_gtc: False
     detach: False
     gtc_decoder:
       name: SMTRDecoder
@@ -62,23 +62,18 @@ Architecture:
       name: RCTCDecoder
 
 Loss:
-  name: GTCLoss
-  ctc_weight: 0.1
-  gtc_loss:
-    name: SMTRLoss
+  name: CTCLoss
+  zero_infinity: True
 
 PostProcess:
-  name: GTCLabelDecode
-  gtc_label_decode:
-    name: SMTRLabelDecode
-    next_mode: *next
+  name: CTCLabelDecode
   character_dict_path: *character_dict_path
   use_space_char: *use_space_char
 
 Metric:
-  name: RecGTCMetric
+  name: RecMetric
   main_indicator: acc
-  # is_filter: True
+  # is_filter: True # EN打开 CH关闭
 
 Train:
   dataset:
@@ -95,20 +90,17 @@ Train:
       - DecodeImagePIL: # load image
           img_mode: RGB
       - PARSeqAugPIL:
-      - GTCLabelEncode: # Class handling label
-          gtc_label_encode:
-            name: SMTRLabelEncode
-            sub_str_len: *subsl
+      - CTCLabelEncode: # Class handling label
           character_dict_path: *character_dict_path
           use_space_char: *use_space_char
           max_text_length: *max_text_length
       - KeepKeys:
-          keep_keys: ['image', 'label', 'label_subs', 'label_next', 'length_subs','label_subs_pre', 'label_next_pre', 'length_subs_pre', 'length', 'ctc_label', 'ctc_length'] # dataloader will return list in this order
+          keep_keys: ['image', 'label', 'length'] # dataloader will return list in this order
   sampler:
     name: RatioSampler
     scales: [[128, 32]] # w, h
     # divide_factor: to ensure the width and height dimensions can be devided by downsampling multiple
-    first_bs: &bs 256
+    first_bs: &bs 128
     fix_bs: false
     divided_factor: [4, 16] # w, h
     is_training: True
@@ -116,7 +108,7 @@ Train:
     shuffle: True
     batch_size_per_card: *bs
     drop_last: True
-    max_ratio: &max_ratio 8
+    max_ratio: &max_ratio 12
     num_workers: 4
 
 Eval:
@@ -124,18 +116,21 @@ Eval:
     name: RatioDataSetTVResize
     ds_width: True
     padding: False
-    data_dir_list: ['/a800data1/lirunrui/origin_datasets/bchw_dataset/scene/scene_test']
+    data_dir_list: [
+      '/a800data1/lirunrui/origin_datasets/bchw_dataset/scene/scene_test',
+      '/a800data1/lirunrui/origin_datasets/bchw_dataset/web/web_test',
+      '/a800data1/lirunrui/origin_datasets/bchw_dataset/document/document_test',
+      '/a800data1/lirunrui/origin_datasets/bchw_dataset/hw/hw_test',
+      ]
     transforms:
       - DecodeImagePIL: # load image
           img_mode: RGB
-      - GTCLabelEncode: # Class handling label
-          gtc_label_encode:
-            name: ARLabelEncode
+      - CTCLabelEncode: # Class handling label
           character_dict_path: *character_dict_path
           use_space_char: *use_space_char
           max_text_length: *max_text_length
       - KeepKeys:
-          keep_keys: ['image', 'label', 'length', 'ctc_label', 'ctc_length'] # dataloader will return list in this order
+          keep_keys: ['image', 'label', 'length'] # dataloader will return list in this order
   sampler:
     name: RatioSampler
     scales: [[128, 32]] # w, h

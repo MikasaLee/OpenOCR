@@ -11,6 +11,7 @@ inference/
 inference_results/
 output/
 output_bctr/
+output_new_visualC3_textline/
 e2e_results/
 rec_results/
 det_results/

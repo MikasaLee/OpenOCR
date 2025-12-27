@@ -84,8 +84,11 @@ class BaseRecLabelEncode(object):
             if char not in self.dict:
                 continue
             text_list.append(self.dict[char])
-        if len(text_list) == 0 or len(text_list) > self.max_text_len:
+        if len(text_list) == 0:
             return None
+        if len(text_list) > self.max_text_len:
+            # change by lrr 20251227: 截断过长文本，避免直接返回 None 导致样本丢弃
+            text_list = text_list[:self.max_text_len]
         return text_list
 
 
@@ -117,6 +120,7 @@ class CTCLabelEncode(BaseRecLabelEncode):
         for x in text:
             label[x] += 1
         data['label_ace'] = np.array(label)
+        # print(data)
         return data
 
     def add_special_char(self, dict_character):

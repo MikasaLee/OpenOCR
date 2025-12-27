@@ -167,6 +167,9 @@ class RatioDataSetTVResize(Dataset):
         valid_ratio = min(1.0, float(resized_w / imgW))
         data['image'] = img
         data['valid_ratio'] = valid_ratio
+        # issue: https://github.com/Topdu/OpenOCR/issues/126
+        r = float(w) / float(h)
+        data['real_ratio'] = max(1, round(r))
         return data
 
     def get_lmdb_sample_info(self, txn, index):

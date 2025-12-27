@@ -51,10 +51,14 @@ def main():
         trainer.logger.info('{}:{}'.format(k, v))
 
     data_dirs_list = [[
-        '../benchmark_bctr/benchmark_bctr_test/scene_test',
-        '../benchmark_bctr/benchmark_bctr_test/web_test',
-        '../benchmark_bctr/benchmark_bctr_test/document_test',
-        '../benchmark_bctr/benchmark_bctr_test/handwriting_test'
+    #   r'/a800data1/lirunrui/origin_datasets/bchw_dataset/scene/scene_test',
+    #   r'/a800data1/lirunrui/origin_datasets/bchw_dataset/web/web_test',
+    #   r'/a800data1/lirunrui/origin_datasets/bchw_dataset/document/document_test',
+    #   r'/a800data1/lirunrui/origin_datasets/bchw_dataset/hw/hw_test',
+      r'/a800data1/lirunrui/lmdb_output/new_Visual_C3/test_correct',
+        # r'/a800data1/lirunrui/origin_datasets/bnu_zh_benchmark_lmdb/common_0',
+        # r'/a800data1/lirunrui/origin_datasets/bnu_zh_benchmark_lmdb/UltraLongText_2',
+        # r'/a800data1/lirunrui/origin_datasets/bnu_zh_benchmark_lmdb/LongText_1',
     ]]
     cfg = cfg.cfg
     file_csv = open(
@@ -76,6 +80,10 @@ def main():
         each_ratio = {}
         for datadir in data_dirs:
             config_each = cfg.copy()
+            # by lrr 
+            # config_each['Eval']['sampler']['first_bs'] = 4
+            # config_each['Eval']['loader']['batch_size_per_card'] = 4
+            
             if msr:
                 config_each['Eval']['dataset']['data_dir_list'] = [datadir]
             else:
@@ -95,7 +103,7 @@ def main():
             acc_each_ignore_space_symbol.append(
                 metric['acc_ignore_space_symbol'] * 100)
             acc_each_lower_ignore_space_symbol.append(
-                metric['acc_lower_ignore_space_symbol'] * 100)
+                metric['acc_ignore_space_lower_symbol'] * 100)
             acc_each_dis.append(metric['norm_edit_dis'])
             acc_each_num.append(metric['num_samples'])
 
@@ -148,7 +156,7 @@ def main():
                        ] + [avg1.sum().tolist()])
         avg1 = np.array(acc_each_lower_ignore_space_symbol) * np.array(
             acc_each_num) / sum(acc_each_num)
-        csv_w.writerow(['acc_lower_ignore_space_symbol'] +
+        csv_w.writerow(['acc_ignore_space_lower_symbol'] +
                        acc_each_lower_ignore_space_symbol + [
                            sum(acc_each_lower_ignore_space_symbol) /
                            len(acc_each_lower_ignore_space_symbol)

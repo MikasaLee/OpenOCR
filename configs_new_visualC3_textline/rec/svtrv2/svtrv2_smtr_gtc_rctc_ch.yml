@@ -3,8 +3,8 @@ Global:
   epoch_num: 100
   log_smooth_window: 20
   print_batch_step: 10
-  output_dir: ./output_bctr/svtrv2_smtr_gtc_rctc_ch
-  save_epoch_step: [15, 1]
+  output_dir: ./output_new_visualC3_textline/svtrv2_smtr_gtc_rctc_ch
+  save_epoch_step: [1, 25]
   # evaluation is run every 2000 iterations
   eval_batch_step: [0, 2000]
   eval_epoch_step: [0, 1]
@@ -15,9 +15,9 @@ Global:
   infer_img:
   # for data or label process
   character_dict_path: &character_dict_path ./tools/utils/ppocr_keys_v1.txt # ch
-  max_text_length: &max_text_length 25
+  max_text_length: &max_text_length 300
   use_space_char: &use_space_char True
-  save_res_path: ./output_bctr/svtrv2_smtr_gtc_rctc_ch/predicts_svtrv2_smtr_gtc_rctc_ch.txt
+  save_res_path: ./output_new_visualC3_textline/svtrv2_smtr_gtc_rctc_ch/predicts_svtrv2_smtr_gtc_rctc_ch.txt
   use_amp: True
 
 Optimizer:
@@ -86,10 +86,7 @@ Train:
     ds_width: True
     padding: false
     data_dir_list: [
-      '/a800data1/lirunrui/origin_datasets/bchw_dataset/bchw_train/document_train',
-      '/a800data1/lirunrui/origin_datasets/bchw_dataset/bchw_train/scene_train',
-      '/a800data1/lirunrui/origin_datasets/bchw_dataset/bchw_train/hw_train',
-      '/a800data1/lirunrui/origin_datasets/bchw_dataset/bchw_train/web_train',
+      '/a800data1/lirunrui/lmdb_output/new_Visual_C3_textline/train/',
       ]
     transforms:
       - DecodeImagePIL: # load image
@@ -108,7 +105,7 @@ Train:
     name: RatioSampler
     scales: [[128, 32]] # w, h
     # divide_factor: to ensure the width and height dimensions can be devided by downsampling multiple
-    first_bs: &bs 256
+    first_bs: &bs 16
     fix_bs: false
     divided_factor: [4, 16] # w, h
     is_training: True
@@ -117,14 +114,14 @@ Train:
     batch_size_per_card: *bs
     drop_last: True
     max_ratio: &max_ratio 8
-    num_workers: 4
+    num_workers: 16
 
 Eval:
   dataset:
     name: RatioDataSetTVResize
     ds_width: True
     padding: False
-    data_dir_list: ['/a800data1/lirunrui/origin_datasets/bchw_dataset/scene/scene_test']
+    data_dir_list: ['/a800data1/lirunrui/lmdb_output/new_Visual_C3_textline/test_correct/']
     transforms:
       - DecodeImagePIL: # load image
           img_mode: RGB
@@ -149,4 +146,4 @@ Eval:
     drop_last: False
     batch_size_per_card: *bs
     max_ratio: *max_ratio
-    num_workers: 4
+    num_workers: 16
