@@ -9,13 +9,13 @@ Global:
   eval_batch_step: [0, 2000]
   eval_epoch_step: [0, 1]
   cal_metric_during_train: False
-  pretrained_model: ./output_new_visualC3_textline/crnn_ctc/best.pth
+  pretrained_model: 
   checkpoints:
   use_tensorboard: false
   infer_img:
   # for data or label process
   character_dict_path: &character_dict_path ./tools/utils/ppocr_keys_v1.txt # ch
-  max_text_length: &max_text_length 300
+  max_text_length: &max_text_length 15
   use_space_char: &use_space_char True
   save_res_path: ./output_new_visualC3_textline/crnn_ctc/predicts_crnn_ctc.txt
   use_amp: True
@@ -57,7 +57,7 @@ Metric:
 Train:
   dataset:
     name: LMDBDataSet
-    data_dir: /a800data1/lirunrui/lmdb_output/new_Visual_C3_textline/train/
+    data_dir: /ipfs/lirunrui/lmdb_dataset/visual_c3_new_textline/train_lmdb
     transforms:
       - DecodeImagePIL: # load image
           img_mode: RGB
@@ -67,7 +67,7 @@ Train:
           use_space_char: *use_space_char
           max_text_length: *max_text_length
       - RecTVResize:
-          image_shape: [32, 512]
+          image_shape: [32, 256]
           padding: False
       - KeepKeys:
           keep_keys: ['image', 'label', 'length'] # dataloader will return list in this order
@@ -75,12 +75,12 @@ Train:
     shuffle: True
     batch_size_per_card: &batch_size_per_card 64
     drop_last: True
-    num_workers: 16
+    num_workers: 8
 
 Eval:
   dataset:
     name: LMDBDataSet
-    data_dir: /a800data1/lirunrui/lmdb_output/new_Visual_C3_textline/test_correct/
+    data_dir: /ipfs/lirunrui/lmdb_dataset/visual_c3_new_textline/test_lmdb/test_correct
     transforms:
       - DecodeImagePIL: # load image
           img_mode: RGB
@@ -89,7 +89,7 @@ Eval:
           use_space_char: *use_space_char
           max_text_length: *max_text_length
       - RecTVResize:
-          image_shape: [32, 512]
+          image_shape: [32, 256]
           padding: False
       - KeepKeys:
           keep_keys: ['image', 'label', 'length'] # dataloader will return list in this order
@@ -97,4 +97,4 @@ Eval:
     shuffle: False
     drop_last: False
     batch_size_per_card: *batch_size_per_card
-    num_workers: 16
+    num_workers: 8

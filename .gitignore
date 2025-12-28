@@ -9,6 +9,8 @@ __pycache__/
 
 inference/
 inference_results/
+outputs
+outputs/
 output/
 output_bctr/
 output_new_visualC3_textline/

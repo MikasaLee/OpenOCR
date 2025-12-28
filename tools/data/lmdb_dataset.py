@@ -36,7 +36,8 @@ class LMDBDataSet(Dataset):
     def load_hierarchical_lmdb_dataset(self, data_dir):
         lmdb_sets = {}
         dataset_idx = 0
-        for dirpath, dirnames, filenames in os.walk(data_dir + '/'):
+        # change by lrr 20251228： 修复 os.walk 无法遍历符号链接目录的问题
+        for dirpath, dirnames, filenames in os.walk(data_dir + '/', followlinks=True):
             if not dirnames:
                 env = lmdb.open(
                     dirpath,
@@ -55,6 +56,7 @@ class LMDBDataSet(Dataset):
                     'num_samples': num_samples,
                 }
                 dataset_idx += 1
+        # print(f"lmdb_sets: {lmdb_sets}") # debug
         return lmdb_sets
 
     def dataset_traversal(self):
