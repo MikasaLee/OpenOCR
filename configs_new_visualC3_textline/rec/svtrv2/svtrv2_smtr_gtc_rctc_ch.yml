@@ -3,21 +3,21 @@ Global:
   epoch_num: 100
   log_smooth_window: 20
   print_batch_step: 10
-  output_dir: ./output_new_visualC3_textline/svtrv2_smtr_gtc_rctc_ch
+  output_dir: ./outputs/output_new_visualC3_textline/svtrv2_smtr_gtc_rctc_ch
   save_epoch_step: [1, 25]
   # evaluation is run every 2000 iterations
   eval_batch_step: [0, 2000]
   eval_epoch_step: [0, 1]
   cal_metric_during_train: False
   pretrained_model:
-  checkpoints:
+  checkpoints: ./outputs/output_new_visualC3_textline/svtrv2_smtr_gtc_rctc_ch/latest.pth
   use_tensorboard: false
   infer_img:
   # for data or label process
   character_dict_path: &character_dict_path ./tools/utils/ppocr_keys_v1.txt # ch
-  max_text_length: &max_text_length 300
+  max_text_length: &max_text_length 15
   use_space_char: &use_space_char True
-  save_res_path: ./output_new_visualC3_textline/svtrv2_smtr_gtc_rctc_ch/predicts_svtrv2_smtr_gtc_rctc_ch.txt
+  save_res_path: ./outputs/output_new_visualC3_textline/svtrv2_smtr_gtc_rctc_ch/predicts_svtrv2_smtr_gtc_rctc_ch.txt
   use_amp: True
 
 Optimizer:
@@ -86,7 +86,7 @@ Train:
     ds_width: True
     padding: false
     data_dir_list: [
-      '/a800data1/lirunrui/lmdb_output/new_Visual_C3_textline/train/',
+      '/ipfs/lirunrui/lmdb_dataset/visual_c3_new_textline/train_lmdb',
       ]
     transforms:
       - DecodeImagePIL: # load image
@@ -114,14 +114,16 @@ Train:
     batch_size_per_card: *bs
     drop_last: True
     max_ratio: &max_ratio 8
-    num_workers: 16
+    num_workers: 8
 
 Eval:
   dataset:
     name: RatioDataSetTVResize
     ds_width: True
     padding: False
-    data_dir_list: ['/a800data1/lirunrui/lmdb_output/new_Visual_C3_textline/test_correct/']
+    data_dir_list: [
+      '/ipfs/lirunrui/lmdb_dataset/visual_c3_new_textline/test_lmdb/test_correct/'
+      ]
     transforms:
       - DecodeImagePIL: # load image
           img_mode: RGB
@@ -146,4 +148,4 @@ Eval:
     drop_last: False
     batch_size_per_card: *bs
     max_ratio: *max_ratio
-    num_workers: 16
+    num_workers: 8
