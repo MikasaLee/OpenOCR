@@ -1,23 +1,23 @@
 Global:
   device: gpu
-  epoch_num: 20
+  epoch_num: 100
   log_smooth_window: 20
   print_batch_step: 10
-  output_dir: ./outputs/output_new_visualC3_textline/svtrv2_smtr_gtc_rctc_ch
-  save_epoch_step: [15, 1]
+  output_dir: ./outputs/output_new_visualC3_ids/svtrv2_smtr_gtc_rctc_ch
+  save_epoch_step: [1, 25]
   # evaluation is run every 2000 iterations
-  eval_batch_step: [0, 500]
+  eval_batch_step: [0, 2000]
   eval_epoch_step: [0, 1]
   cal_metric_during_train: False
-  pretrained_model: ./outputs/output_new_visualC3_textline/svtrv2_smtr_gtc_rctc_ch/best.pth
-  checkpoints:
+  pretrained_model:
+  checkpoints: ./outputs/output_new_visualC3_ids/svtrv2_smtr_gtc_rctc_ch/latest.pth
   use_tensorboard: false
   infer_img:
   # for data or label process
-  character_dict_path: &character_dict_path ./tools/utils/ppocr_keys_v1.txt # ch
-  max_text_length: &max_text_length 15
+  character_dict_path: &character_dict_path /lirunrui/OpenOCR/tools/utils/dict/visual_c3_ids/minimal_ids_dict.txt # ch_ids
+  max_text_length: &max_text_length 100
   use_space_char: &use_space_char True
-  save_res_path: ./outputs/output_new_visualC3_textline/svtrv2_smtr_gtc_rctc_ch/predicts_svtrv2_smtr_gtc_rctc_ch.txt
+  save_res_path: ./outputs/output_new_visualC3_ids/svtrv2_smtr_gtc_rctc_ch/predicts_svtrv2_smtr_gtc_rctc_ch.txt
   use_amp: True
 
 Optimizer:
@@ -49,7 +49,7 @@ Architecture:
     feat2d: True
   Decoder:
     name: GTCDecoder
-    infer_gtc: False
+    infer_gtc: True
     detach: False
     gtc_decoder:
       name: SMTRDecoder
@@ -62,18 +62,23 @@ Architecture:
       name: RCTCDecoder
 
 Loss:
-  name: CTCLoss
-  zero_infinity: True
+  name: GTCLoss
+  ctc_weight: 0.1
+  gtc_loss:
+    name: SMTRLoss
 
 PostProcess:
-  name: CTCLabelDecode
+  name: GTCLabelDecode
+  gtc_label_decode:
+    name: SMTRLabelDecode
+    next_mode: *next
   character_dict_path: *character_dict_path
   use_space_char: *use_space_char
 
 Metric:
-  name: RecMetric
+  name: RecGTCMetric
   main_indicator: acc
-  # is_filter: True # EN打开 CH关闭
+  # is_filter: True
 
 Train:
   dataset:
@@ -81,23 +86,26 @@ Train:
     ds_width: True
     padding: false
     data_dir_list: [
-      '/ipfs/lirunrui/lmdb_dataset/visual_c3_new_textline/train_lmdb',
-      ]
+      '/ipfs/lirunrui/lmdb_dataset/visual_c3_new_ids/train_ids_lmdb',
+    ]
     transforms:
       - DecodeImagePIL: # load image
           img_mode: RGB
       - PARSeqAugPIL:
-      - CTCLabelEncode: # Class handling label
+      - GTCLabelEncode: # Class handling label
+          gtc_label_encode:
+            name: SMTRLabelEncode
+            sub_str_len: *subsl
           character_dict_path: *character_dict_path
           use_space_char: *use_space_char
           max_text_length: *max_text_length
       - KeepKeys:
-          keep_keys: ['image', 'label', 'length'] # dataloader will return list in this order
+          keep_keys: ['image', 'label', 'label_subs', 'label_next', 'length_subs','label_subs_pre', 'label_next_pre', 'length_subs_pre', 'length', 'ctc_label', 'ctc_length'] # dataloader will return list in this order
   sampler:
     name: RatioSampler
     scales: [[128, 32]] # w, h
     # divide_factor: to ensure the width and height dimensions can be devided by downsampling multiple
-    first_bs: &bs 128
+    first_bs: &bs 16
     fix_bs: false
     divided_factor: [4, 16] # w, h
     is_training: True
@@ -105,8 +113,8 @@ Train:
     shuffle: True
     batch_size_per_card: *bs
     drop_last: True
-    max_ratio: &max_ratio 12
-    num_workers: 4
+    max_ratio: &max_ratio 8
+    num_workers: 8
 
 Eval:
   dataset:
@@ -114,17 +122,19 @@ Eval:
     ds_width: True
     padding: False
     data_dir_list: [
-      '/ipfs/lirunrui/lmdb_dataset/visual_c3_new_textline/test_lmdb/test_correct/'
-      ]
+      '/ipfs/lirunrui/lmdb_dataset/visual_c3_new_ids/test_ids_lmdb/test_correct',
+    ]
     transforms:
       - DecodeImagePIL: # load image
           img_mode: RGB
-      - CTCLabelEncode: # Class handling label
+      - GTCLabelEncode: # Class handling label
+          gtc_label_encode:
+            name: ARLabelEncode
           character_dict_path: *character_dict_path
           use_space_char: *use_space_char
           max_text_length: *max_text_length
       - KeepKeys:
-          keep_keys: ['image', 'label', 'length'] # dataloader will return list in this order
+          keep_keys: ['image', 'label', 'length', 'ctc_label', 'ctc_length'] # dataloader will return list in this order
   sampler:
     name: RatioSampler
     scales: [[128, 32]] # w, h
@@ -138,4 +148,4 @@ Eval:
     drop_last: False
     batch_size_per_card: *bs
     max_ratio: *max_ratio
-    num_workers: 4
+    num_workers: 8
