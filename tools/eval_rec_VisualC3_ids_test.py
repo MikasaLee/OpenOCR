@@ -1,3 +1,4 @@
+import io
 import os
 import sys
 import torch
@@ -5,6 +6,7 @@ import numpy as np
 from collections import OrderedDict
 from rapidfuzz.distance import Levenshtein
 from tqdm import tqdm
+from PIL import Image
 
 __dir__ = os.path.dirname(os.path.abspath(__file__))
 sys.path.append(__dir__)
@@ -255,8 +257,55 @@ def prepare_cfg(cfg):
         keep_keys.append('real_ratio')
     return cfg
 
+def split_src_tgt(gt_raw: str):
+    """
+    解析 faked 标签：'src | | | tgt' -> (src, tgt)
+    兼容：
+      - 没有 '| | |'：只返回 (gt_raw, None)
+      - 有 '| | |' ：返回 (src, tgt)
+    """
+    if gt_raw is None:
+        return "", None
+    s = str(gt_raw).strip()
+    if '? ? ?' not in s:
+        return s, None
+    parts = s.split('? ? ?')
+    
+    if len(parts) != 2:
+        print(f"[WARN] Unexpected faked gt format: {gt_raw}")
+        return s, None
+    
+    # print(f"[INFO] Splitting faked gt: {parts}") # debug
+    src = parts[0].strip()
+    tgt = parts[1].strip()
+    
+    return src, tgt
 
-def dump_predictions(trainer, datadir, output_log, dataset_name, ids2char, det_inputs):
+
+def to_png_bytes(img_array):
+    """将 numpy 图像数组转成 PNG bytes，兼容单通道/三通道及 0~1/0~255 输入。"""
+    if img_array is None:
+        return None
+
+    arr = np.array(img_array)
+    if arr.ndim == 3 and arr.shape[0] in (1, 3):
+        arr = np.transpose(arr, (1, 2, 0))
+    arr = np.squeeze(arr)
+
+    # 归一化到 0-255
+    if arr.max() <= 1.0 + 1e-3:
+        arr = arr * 255.0
+    arr = np.clip(arr, 0, 255).astype(np.uint8)
+
+    mode = 'L' if arr.ndim == 2 else 'RGB'
+    img = Image.fromarray(arr, mode=mode)
+    buf = io.BytesIO()
+    img.save(buf, format='PNG')
+    data = buf.getvalue()
+    buf.close()
+    return data
+
+def dump_predictions(trainer, datadir, output_log, dataset_name, ids2char, det_inputs, image_bytes):
     config_each = trainer.cfg.copy()
     if 'RatioDataSet' in config_each['Eval']['dataset']['name']:
         config_each['Eval']['dataset']['data_dir_list'] = [datadir]
@@ -276,8 +325,10 @@ def dump_predictions(trainer, datadir, output_log, dataset_name, ids2char, det_i
         pbar = tqdm(total=len(valid_dataloader), desc=f'eval {dataset_name}', position=0, leave=True)
         sample_offset = 0
         for batch_idx, batch in enumerate(valid_dataloader):
-            batch_tensor = [t.to(device) for t in batch]
-            batch_numpy = [t.numpy() for t in batch]
+            # batch: [image_tensor, label_tensor, length_tensor, raw_images(list/np)]
+            batch_tensor = [t.to(device) for t in batch[:3]]
+            batch_numpy = [t.numpy() for t in batch[:3]]
+            raw_images = batch[3] if len(batch) > 3 else None
             preds = model(batch_tensor[0], data=batch_tensor[1:])
             post_result = post_process(preds, batch_numpy)
             if isinstance(post_result, tuple):
@@ -289,6 +340,10 @@ def dump_predictions(trainer, datadir, output_log, dataset_name, ids2char, det_i
                 gt_ids = ''
                 if gts is not None and i < len(gts):
                     gt_ids = gts[i][0]
+
+                # ===== 关键修改：解析 'src|||tgt'，先只用 src检测, 纠错这块还没想好。 =====
+                gt_src_ids, gt_tgt_ids = split_src_tgt(gt_ids)
+                gt_ids = gt_src_ids    
 
                 # IDS -> 字符
                 txt = ids_seq_to_text(txt_ids, ids2char, unknown_char='X')
@@ -313,7 +368,16 @@ def dump_predictions(trainer, datadir, output_log, dataset_name, ids2char, det_i
                 output_log['type'].append(dataset_name)
                 output_log['label'].append(gt_norm)
                 output_log['pred'].append(txt_norm)
+                output_log['label_ids'].append(str(gt_ids))
+                output_log['pred_ids'].append(str(txt_ids))
                 output_log['NED'].append(float(ned))
+
+                # 还原当前样本的图像（经过 transform），以便后续写入 XLSX
+                try:
+                    sample_img = raw_images[i] if raw_images is not None else None
+                    image_bytes.append(to_png_bytes(sample_img))
+                except Exception:
+                    image_bytes.append(None)
 
             sample_offset += len(texts)
             pbar.update(1)
@@ -355,8 +419,8 @@ def main():
 
     # 可按需覆盖
     data_dirs_list = [[
-        r'/ipfs/lirunrui/lmdb_dataset/visual_c3_new_ids/test_ids_lmdb/test_correct'
-        # r'/ipfs/lirunrui/lmdb_dataset/visual_c3_new_ids/test_ids_lmdb/test_error'
+        r'/ipfs/lirunrui/lmdb_dataset/visual_c3_new_ids/test_ids_lmdb/test_correct',
+        r'/ipfs/lirunrui/lmdb_dataset/visual_c3_new_ids/test_ids_lmdb/test_faked'
     ]]
 
     output_log = OrderedDict([
@@ -364,9 +428,12 @@ def main():
         ('type', []),
         ('label', []),
         ('pred', []),
+        ('label_ids', []),
+        ('pred_ids', []),
         ('NED', []),
     ])
     det_inputs = {'gts': [], 'preds': []}
+    image_bytes = []
 
     every_PNacc_list = []
     every_ned_list = []
@@ -377,7 +444,7 @@ def main():
     for data_dirs in data_dirs_list:
         for datadir in data_dirs:
             dataset_name = datadir[:-1].split('/')[-1] if datadir.endswith('/') else datadir.split('/')[-1]
-            pnacc, ned_mean, num = dump_predictions(trainer, datadir, output_log, dataset_name, ids2char, det_inputs)
+            pnacc, ned_mean, num = dump_predictions(trainer, datadir, output_log, dataset_name, ids2char, det_inputs, image_bytes)
             print(f"{dataset_name}:\t\t acc: {100 * pnacc:6g}, norm_edit_dis:{100 * ned_mean:6g}")
             every_PNacc_list.append(pnacc)
             every_ned_list.append(ned_mean)
@@ -389,6 +456,52 @@ def main():
         import pandas as pd
         df = pd.DataFrame(output_log)
         df.to_excel(save_pred_xlsx, index=False)
+
+        # 将图像嵌入到 Excel（列 F，标题 image）。需要 openpyxl。
+        try:
+            from openpyxl import load_workbook
+            from openpyxl.drawing.image import Image as OpenpyxlImage
+            from openpyxl.utils import get_column_letter
+
+            wb = load_workbook(save_pred_xlsx)
+            ws = wb.active
+            img_col = ws.max_column + 1
+            ws.cell(row=1, column=img_col, value='image')
+            img_col_letter = get_column_letter(img_col)
+
+            # 设定列宽以容纳缩略图（约 160px）
+            target_px = 160
+            ws.column_dimensions[img_col_letter].width = max(ws.column_dimensions[img_col_letter].width or 0, target_px / 7.0)
+
+            embedded = 0
+            for r_idx, data in enumerate(image_bytes, start=2):
+                if not data:
+                    continue
+                img_obj = OpenpyxlImage(io.BytesIO(data))
+
+                # 先用 PIL 读取尺寸，避免访问私有属性
+                try:
+                    from PIL import Image as PILImage
+                    with PILImage.open(io.BytesIO(data)) as pil_img:
+                        w, h = pil_img.size
+                except Exception:
+                    w, h = None, None
+
+                img_obj.width = target_px
+                if w and h and w > 0:
+                    img_obj.height = h * (target_px / float(w))
+                ws.row_dimensions[r_idx].height = max(ws.row_dimensions[r_idx].height or 0, img_obj.height * 0.75)
+
+                # 直接锚定到目标单元格坐标，依赖行高/列宽约束尺寸
+                img_obj.anchor = f"{img_col_letter}{r_idx}"
+                ws.add_image(img_obj)
+                embedded += 1
+
+            print(f"[INFO] Embedded {embedded} images into Excel")
+
+            wb.save(save_pred_xlsx)
+        except Exception as embed_err:
+            print(f"[WARN] Failed to embed images into XLSX ({embed_err}). Ensure openpyxl is installed.")
         total_acc = (total_True_num / total_num) if total_num else 0.0
         total_ned = float(np.mean(total_ned_list)) if total_ned_list else 0.0
         s_mean_acc = float(np.mean(every_PNacc_list)) if every_PNacc_list else 0.0

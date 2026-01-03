@@ -53,6 +53,19 @@ class SSLRotateCollate(object):
         return output
 
 
+class RecWithRawCollator(object):
+    """Collate for rec with extra raw image (variable size)."""
+
+    def __call__(self, batch):
+        from torch.utils.data._utils.collate import default_collate
+
+        imgs = default_collate([b[0] for b in batch])
+        labels = default_collate([b[1] for b in batch])
+        lengths = default_collate([b[2] for b in batch])
+        raws = [b[3] for b in batch]
+        return [imgs, labels, lengths, raws]
+
+
 class DyMaskCollator(object):
     """
     batch: [

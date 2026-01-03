@@ -16,6 +16,25 @@ class KeepKeys:
         return [data[key] for key in self.keep_keys]
 
 
+class SaveRawImageBytes:
+
+    def __init__(self, dst_key='image_raw', src_key='image', **kwargs):
+        self.dst_key = dst_key
+        self.src_key = src_key
+
+    def __call__(self, data):
+        # 保存尚未经过 resize/normalize 的原始图像（转为 numpy，避免 DataLoader 默认 collate 失败）
+        img = data.get(self.src_key)
+        if img is None:
+            data[self.dst_key] = None
+            return data
+        try:
+            data[self.dst_key] = np.array(img)
+        except Exception:
+            data[self.dst_key] = None
+        return data
+
+
 class Fasttext:
 
     def __init__(self, path='None', **kwargs):
