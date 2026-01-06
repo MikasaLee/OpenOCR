@@ -1,3 +1,4 @@
+import io
 import os
 import sys
 import torch
@@ -5,6 +6,7 @@ import numpy as np
 from collections import OrderedDict
 from rapidfuzz.distance import Levenshtein
 from tqdm import tqdm
+from PIL import Image
 
 __dir__ = os.path.dirname(os.path.abspath(__file__))
 sys.path.append(__dir__)
@@ -14,6 +16,7 @@ from tools.data import build_dataloader
 from tools.engine.config import Config  
 from tools.engine.trainer import Trainer  
 from tools.utility import ArgsParser  
+
 def replace_punctuation(text: str) -> str:
     """将常见中文标点替换为英文标点，保持与参考脚本一致。"""
     if text is None:
@@ -34,6 +37,29 @@ def replace_punctuation(text: str) -> str:
     for k, v in mapping.items():
         text = text.replace(k, v)
     return text
+
+
+def to_png_bytes(img_array):
+    """将 numpy 图像数组转成 PNG bytes，兼容单通道/三通道及 0~1/0~255 输入。"""
+    if img_array is None:
+        return None
+
+    arr = np.array(img_array)
+    if arr.ndim == 3 and arr.shape[0] in (1, 3):
+        arr = np.transpose(arr, (1, 2, 0))
+    arr = np.squeeze(arr)
+
+    if arr.max() <= 1.0 + 1e-3:
+        arr = arr * 255.0
+    arr = np.clip(arr, 0, 255).astype(np.uint8)
+
+    mode = 'L' if arr.ndim == 2 else 'RGB'
+    img = Image.fromarray(arr, mode=mode)
+    buf = io.BytesIO()
+    img.save(buf, format='PNG')
+    data = buf.getvalue()
+    buf.close()
+    return data
 
 
 
@@ -67,7 +93,7 @@ def prepare_cfg(cfg):
     return cfg
 
 
-def dump_predictions(trainer, datadir, output_log, dataset_name):
+def dump_predictions(trainer, datadir, output_log, dataset_name, image_bytes):
     config_each = trainer.cfg.copy()
     if 'RatioDataSet' in config_each['Eval']['dataset']['name']:
         config_each['Eval']['dataset']['data_dir_list'] = [datadir]
@@ -87,8 +113,9 @@ def dump_predictions(trainer, datadir, output_log, dataset_name):
         pbar = tqdm(total=len(valid_dataloader), desc=f'eval {dataset_name}', position=0, leave=True)
         sample_offset = 0
         for batch_idx, batch in enumerate(valid_dataloader):
-            batch_tensor = [t.to(device) for t in batch]
-            batch_numpy = [t.numpy() for t in batch]
+            batch_tensor = [t.to(device) for t in batch[:3]]
+            batch_numpy = [t.numpy() for t in batch[:3]]
+            raw_images = batch[3] if len(batch) > 3 else None
             preds = model(batch_tensor[0], data=batch_tensor[1:])
             post_result = post_process(preds, batch_numpy)
             if isinstance(post_result, tuple):
@@ -116,6 +143,11 @@ def dump_predictions(trainer, datadir, output_log, dataset_name):
                 output_log['label'].append(gt_norm)
                 output_log['pred'].append(txt_norm)
                 output_log['NED'].append(float(ned))
+                try:
+                    sample_img = raw_images[i] if raw_images is not None else None
+                    image_bytes.append(to_png_bytes(sample_img))
+                except Exception:
+                    image_bytes.append(None)
             sample_offset += len(texts)
             pbar.update(1)
         pbar.close()
@@ -151,7 +183,7 @@ def main():
 
     # Optional custom override example (keep commented):
     data_dirs_list = [[
-        r'/ipfs/lirunrui/lmdb_dataset/visual_c3_new_textline/test_lmdb/test_correct',
+        r'/ipfs/lirunrui/lmdb_dataset/visual_c3_new_textlinev2/test_lmdb/test_correct',
         # r'/a800data1/lirunrui/origin_datasets/bchw_dataset/scene/scene_test',
     ]]
 
@@ -162,6 +194,7 @@ def main():
         ('pred', []),
         ('NED', []),
     ])
+    image_bytes = []
     every_PNacc_list = []
     every_ned_list = []
     total_num = 0
@@ -170,7 +203,7 @@ def main():
     for data_dirs in data_dirs_list:
         for datadir in data_dirs:
             dataset_name = datadir[:-1].split('/')[-1] if datadir.endswith('/') else datadir.split('/')[-1]
-            pnacc, ned_mean, num = dump_predictions(trainer, datadir, output_log, dataset_name)
+            pnacc, ned_mean, num = dump_predictions(trainer, datadir, output_log, dataset_name, image_bytes)
             print(f"{dataset_name}:\t\t acc: {100 * pnacc:6g}, norm_edit_dis:{100 * ned_mean:6g}")
             every_PNacc_list.append(pnacc)
             every_ned_list.append(ned_mean)
@@ -182,6 +215,44 @@ def main():
         import pandas as pd
         df = pd.DataFrame(output_log)
         df.to_excel(save_pred_xlsx, index=False)
+        try:
+            from openpyxl import load_workbook
+            from openpyxl.drawing.image import Image as OpenpyxlImage
+            from openpyxl.utils import get_column_letter
+
+            wb = load_workbook(save_pred_xlsx)
+            ws = wb.active
+            img_col = ws.max_column + 1
+            ws.cell(row=1, column=img_col, value='image')
+            img_col_letter = get_column_letter(img_col)
+
+            target_px = 160
+            ws.column_dimensions[img_col_letter].width = max(ws.column_dimensions[img_col_letter].width or 0, target_px / 7.0)
+
+            embedded = 0
+            for r_idx, data in enumerate(image_bytes, start=2):
+                if not data:
+                    continue
+                img_obj = OpenpyxlImage(io.BytesIO(data))
+                try:
+                    with Image.open(io.BytesIO(data)) as pil_img:
+                        w, h = pil_img.size
+                except Exception:
+                    w, h = None, None
+
+                img_obj.width = target_px
+                if w and h and w > 0:
+                    img_obj.height = h * (target_px / float(w))
+                ws.row_dimensions[r_idx].height = max(ws.row_dimensions[r_idx].height or 0, img_obj.height * 0.75)
+
+                img_obj.anchor = f"{img_col_letter}{r_idx}"
+                ws.add_image(img_obj)
+                embedded += 1
+
+            print(f"[INFO] Embedded {embedded} images into Excel")
+            wb.save(save_pred_xlsx)
+        except Exception as embed_err:
+            print(f"[WARN] Failed to embed images into XLSX ({embed_err}). Ensure openpyxl is installed.")
         # 汇总日志
         total_acc = (total_True_num / total_num) if total_num else 0.0
         total_ned = float(np.mean(total_ned_list)) if total_ned_list else 0.0

@@ -70,7 +70,7 @@ Train:
           image_shape: [32, 256]
           padding: False
       - KeepKeys:
-          keep_keys: ['image', 'label', 'length'] # image_raw 为原始未 resize 图像
+          keep_keys: ['image', 'label', 'length'] 
   loader:
     shuffle: True
     batch_size_per_card: &batch_size_per_card 256
@@ -84,7 +84,7 @@ Eval:
     transforms:
       - DecodeImagePIL: # load image
           img_mode: RGB
-      - SaveRawImageBytes:
+      - SaveRawImageBytes:  # eval 时打开可保存原始图像
         dst_key: image_raw
         src_key: image
       - CTCLabelEncode: # Class handling label
@@ -95,10 +95,11 @@ Eval:
           image_shape: [32, 256]
           padding: False
       - KeepKeys:
-          keep_keys: ['image', 'label', 'length', 'image_raw'] # image_raw 为原始未 resize 图像
+          # keep_keys: ['image', 'label', 'length']
+          keep_keys: ['image', 'label', 'length', 'image_raw'] # eval 时打开可保存原始图像
   loader:
     shuffle: False
     drop_last: False
     batch_size_per_card: *batch_size_per_card
     num_workers: 8
-    collate_fn: RecWithRawCollator
+    collate_fn: RecWithRawCollator # eval 时打开可保存原始图像

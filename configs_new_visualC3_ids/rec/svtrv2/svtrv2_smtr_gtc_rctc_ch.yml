@@ -10,7 +10,7 @@ Global:
   eval_epoch_step: [0, 1]
   cal_metric_during_train: False
   pretrained_model:
-  checkpoints: ./outputs/output_new_visualC3_ids/svtrv2_smtr_gtc_rctc_ch/latest.pth
+  checkpoints: 
   use_tensorboard: false
   infer_img:
   # for data or label process
@@ -105,7 +105,7 @@ Train:
     name: RatioSampler
     scales: [[128, 32]] # w, h
     # divide_factor: to ensure the width and height dimensions can be devided by downsampling multiple
-    first_bs: &bs 16
+    first_bs: &bs 256
     fix_bs: false
     divided_factor: [4, 16] # w, h
     is_training: True
