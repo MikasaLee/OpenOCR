@@ -138,6 +138,7 @@ class LMDBDataSet(Dataset):
         outs = transform(data, self.ops)
         if outs is None:
             return self.__getitem__(np.random.randint(self.__len__()))
+        print(outs)  # debug
         return outs
 
     def __len__(self):
