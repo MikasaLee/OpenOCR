@@ -16,10 +16,17 @@ from tools.data import build_dataloader
 from tools.engine.config import Config
 from tools.engine.trainer import Trainer
 from tools.utility import ArgsParser
-from tools.utils.ids_syntax import validate_ids_prefix, DEFAULT_IDC_ARITY
+from tools.utils.ids_syntax import (
+    build_idc_arity_for_vocab,
+    load_vocab_from_file,
+    validate_ids_prefix,
+)
 
 
 IDS_DICT_PATH = os.path.join(__dir__, 'utils', 'dict', 'visual_c3_ids', 'char_to_ids.txt')
+IDS_VOCAB_PATH = os.path.join(__dir__, 'utils', 'dict', 'visual_c3_ids', 'minimal_ids_dict.txt')
+DEFAULT_IDS_BEAM = 10
+IDS_SEP_TOKEN = ' '
 
 
 # =========================
@@ -35,7 +42,7 @@ def align_by_opcodes(gt: str, pred: str, gap_char=None):
     """
     aligned = []
 
-    # opcodes: (tag, i1, i2, j1, j2), tag in {equal, replace, insert, delete} :contentReference[oaicite:2]{index=2}
+    # opcodes: (tag, i1, i2, j1, j2), tag in {equal, replace, insert, delete}
     for tag, i1, i2, j1, j2 in Levenshtein.opcodes(gt, pred):
         if tag in ("equal", "replace"):
             len_a = i2 - i1
@@ -86,7 +93,7 @@ def calculate_cuo_metric_compact(gt_sentences, pred_sentences, X='X'):
     - N_clean_sent: GT 无 X 的句子数
     - N_error_sent: GT 有 X 的句子数
     - Char_P / Char_R / Char_F1:
-        precision = TP/(TP+FP), recall = TP/(TP+FN) :contentReference[oaicite:3]{index=3}
+        precision = TP/(TP+FP), recall = TP/(TP+FN)
     - Sent_FA: clean sentence 上预测出任意 X 的比例（误报率）
     - Sent_EM: error sentence 上 exact match（X位置集合完全一致且不能多报/插入X）的比例
     """
@@ -154,8 +161,8 @@ def calculate_cuo_metric_compact(gt_sentences, pred_sentences, X='X'):
                 sent_fa += 1
 
     # char-level metrics
-    char_p = _safe_pct(tp, tp + fp)   # TP/(TP+FP) :contentReference[oaicite:4]{index=4}
-    char_r = _safe_pct(tp, tp + fn)   # TP/(TP+FN) :contentReference[oaicite:5]{index=5}
+    char_p = _safe_pct(tp, tp + fp)
+    char_r = _safe_pct(tp, tp + fn)
     char_f1 = None
     if char_p is not None and char_r is not None and (char_p + char_r) > 0:
         char_f1 = 2 * char_p * char_r / (char_p + char_r)
@@ -178,6 +185,178 @@ def calculate_cuo_metric_compact(gt_sentences, pred_sentences, X='X'):
         "Char_FP": fp,
         "Char_FN": fn,
     }
+
+
+# =========================
+# IDS 语法检查 / 修剪
+# =========================
+def _tokens_from_ids(ids_seq: str):
+    """Split IDS string into tokens (drop spaces)."""
+    return [ch for ch in ids_seq if not ch.isspace()]
+
+
+def sanitize_ids_sequence(ids_seq: str, idc_arity: dict, sep: str = IDS_SEP_TOKEN):
+    """
+    Ensure IDS string is syntactically valid.
+    - If already valid: return original
+    - Else: find longest prefix with need==0; if none, return ''
+    Returns (fixed_ids, was_modified: bool)
+    """
+    parts = ids_seq.strip().split()
+    fixed_parts = []
+    modified = False
+    for part in parts:
+        tokens = [ch for ch in part if not ch.isspace()]
+        ok, _, _ = validate_ids_prefix(tokens, idc_arity, require_closed=True)
+        if ok:
+            fixed_parts.append(part)
+            continue
+
+        need = 1
+        last_good = -1
+        for i, ch in enumerate(tokens):
+            need = need - 1 + idc_arity.get(ch, 0)
+            if need < 0:
+                break
+            if need == 0:
+                last_good = i
+        if last_good >= 0:
+            fixed_parts.append(''.join(tokens[:last_good + 1]))
+        else:
+            fixed_parts.append('__INVALID__')  # 占位，确保分词长度不塌
+        modified = True
+
+    return sep.join(fixed_parts), modified
+
+
+def log_charset_and_arity(charset, idc_arity: dict, ids_vocab=None, sep_token: str = IDS_SEP_TOKEN):
+    """Print charset stats and IDC coverage once for debugging."""
+    ids_vocab_set = set(ids_vocab) if ids_vocab is not None else None
+
+    charset_size = len(charset) if charset is not None else 0
+    has_sep = (sep_token in charset) if charset is not None else False
+    idc_in_charset = []
+    if charset is not None:
+        idc_in_charset = [ch for ch in charset if idc_arity.get(ch, 0) > 0]
+    missing_idc_in_charset = [ch for ch in idc_arity.keys() if charset is not None and ch not in charset]
+    vocab_hit = None
+    if ids_vocab_set is not None and charset is not None:
+        vocab_hit = sum(1 for ch in charset if ch in ids_vocab_set)
+
+    print(f"[IDS] charset_size={charset_size}, has_sep={has_sep}, idc_in_charset={len(idc_in_charset)}, idc_missing_in_charset={len(missing_idc_in_charset)}")
+    if missing_idc_in_charset:
+        print(f"[IDS] missing IDC tokens from charset: {''.join(missing_idc_in_charset)}")
+    if ids_vocab_set is not None and charset is not None:
+        print(f"[IDS] charset∩vocab={vocab_hit} / vocab_size={len(ids_vocab_set)}")
+
+
+def ctc_prefix_beam_search_ids(log_probs: np.ndarray, charset, beam_size: int, idc_arity: dict, sep_token: str = IDS_SEP_TOKEN):
+    """
+    CTC prefix beam search with IDS need-count constraint.
+    log_probs: [T, V] (log-softmax)
+    charset: list/tuple of tokens; charset[0] must be blank
+    Returns (best_seq_str, best_logp) or (None, -inf) if no closed tree.
+    """
+    NEG_INF = -1e30
+    blank_id = 0
+    try:
+        sep_id = charset.index(sep_token)
+    except ValueError:
+        sep_id = None
+
+    T, V = log_probs.shape
+    beam = {(tuple(), 1): (0.0, NEG_INF)}  # (prefix, need) -> (pb, pnb)
+
+    for t in range(T):
+        new_beam = {}
+        # prune current beam to top beam_size by total score
+        beam_items = sorted(beam.items(), key=lambda kv: np.logaddexp(kv[1][0], kv[1][1]), reverse=True)
+        beam_items = beam_items[:beam_size]
+
+        logp_t = log_probs[t]
+        topk_size = min(V, max(50, beam_size * 10))
+        topk = np.argpartition(-logp_t, topk_size - 1)[:topk_size].tolist()
+        if blank_id not in topk:
+            topk.append(blank_id)
+        if sep_id is not None and sep_id not in topk:
+            topk.append(sep_id)
+
+        for (prefix, need), (pb, pnb) in beam_items:
+            last = prefix[-1] if prefix else None
+
+            # blank transition (prefix unchanged)
+            nb_pb, nb_pnb = new_beam.get((prefix, need), (NEG_INF, NEG_INF))
+            nb_pb = np.logaddexp(nb_pb, np.logaddexp(pb, pnb) + logp_t[blank_id])
+            new_beam[(prefix, need)] = (nb_pb, nb_pnb)
+
+            for c in topk:
+                if c == blank_id:
+                    continue
+                ch = charset[c]
+                p = logp_t[c]
+
+                # 分隔符：新增仅在 need==0；重复帧放行以累积概率
+                if ch == sep_token:
+                    if c == last:
+                        n_pb, n_pnb = new_beam.get((prefix, need), (NEG_INF, NEG_INF))
+                        n_pnb = np.logaddexp(n_pnb, pnb + p)  # repeat来自pnb
+                        new_beam[(prefix, need)] = (n_pb, n_pnb)
+                    else:
+                        if need != 0:
+                            continue
+                        new_prefix = prefix + (c,)
+                        new_need = 1
+                        n_pb, n_pnb = new_beam.get((new_prefix, new_need), (NEG_INF, NEG_INF))
+                        n_pnb = np.logaddexp(n_pnb, np.logaddexp(pb, pnb) + p)
+                        new_beam[(new_prefix, new_need)] = (n_pb, n_pnb)
+                    continue
+
+                arity = idc_arity.get(ch, 0)
+
+                # repeat token == last(prefix)
+                if c == last:
+                    # (a) repeat collapses: prefix unchanged, from pnb
+                    n_pb, n_pnb = new_beam.get((prefix, need), (NEG_INF, NEG_INF))
+                    n_pnb = np.logaddexp(n_pnb, pnb + p)
+                    new_beam[(prefix, need)] = (n_pb, n_pnb)
+
+                    # (b) real append (only from pb) if still within current word
+                    if need == 0:
+                        continue  # 已闭合，必须先空格
+                    new_need = need - 1 + arity
+                    if new_need < 0:
+                        continue
+                    new_prefix = prefix + (c,)
+                    n_pb, n_pnb = new_beam.get((new_prefix, new_need), (NEG_INF, NEG_INF))
+                    n_pnb = np.logaddexp(n_pnb, pb + p)
+                    new_beam[(new_prefix, new_need)] = (n_pb, n_pnb)
+                else:
+                    # non-repeat append from (pb+pnb)
+                    if need == 0:
+                        continue  # 字已闭合，必须先空格
+                    new_need = need - 1 + arity
+                    if new_need < 0:
+                        continue
+                    new_prefix = prefix + (c,)
+                    n_pb, n_pnb = new_beam.get((new_prefix, new_need), (NEG_INF, NEG_INF))
+                    n_pnb = np.logaddexp(n_pnb, np.logaddexp(pb, pnb) + p)
+                    new_beam[(new_prefix, new_need)] = (n_pb, n_pnb)
+
+        beam = new_beam
+
+    best_seq = None
+    best_logp = NEG_INF
+    for (prefix, need), (pb, pnb) in beam.items():
+        if need != 0:
+            continue
+        score = np.logaddexp(pb, pnb)
+        if score > best_logp:
+            best_logp = score
+            best_seq = prefix
+
+    if best_seq is None:
+        return None, NEG_INF
+    return ''.join([charset[i] for i in best_seq]), best_logp
 
 
 # =========================
@@ -230,13 +409,30 @@ def parse_args():
         '--save_pred_xlsx',
         type=str,
         default=None,
-        help='Path to save prediction XLSX. Default: <output_dir>/preds_dump.xlsx',
+        help='Path to save prediction XLSX. Default: <output_dir>/preds_dump_ids_beam.xlsx',
     )
     parser.add_argument(
         '--ids_dict_path',
         type=str,
         default=IDS_DICT_PATH,
         help='Path to char_to_ids mapping file.',
+    )
+    parser.add_argument(
+        '--ids_vocab_path',
+        type=str,
+        default=IDS_VOCAB_PATH,
+        help='Path to IDS vocabulary (one token per line) for syntax check.',
+    )
+    parser.add_argument(
+        '--ids_beam_size',
+        type=int,
+        default=DEFAULT_IDS_BEAM,
+        help='Beam size for IDS-constrained CTC prefix search. Set 0 to disable.',
+    )
+    parser.add_argument(
+        '--ids_use_constraint',
+        action='store_true',
+        help='Enable IDS syntax constraint during CTC prefix beam search.',
     )
     args = parser.parse_args()
     return args
@@ -260,10 +456,10 @@ def prepare_cfg(cfg):
 
 def split_src_tgt(gt_raw: str):
     """
-    解析 faked 标签：'src | | | tgt' -> (src, tgt)
+    解析 faked 标签：'src ? ? ? tgt' -> (src, tgt)
     兼容：
-      - 没有 '| | |'：只返回 (gt_raw, None)
-      - 有 '| | |' ：返回 (src, tgt)
+      - 没有 '? ? ?'：只返回 (gt_raw, None)
+      - 有 '? ? ?' ：返回 (src, tgt)
     """
     if gt_raw is None:
         return "", None
@@ -276,7 +472,6 @@ def split_src_tgt(gt_raw: str):
         print(f"[WARN] Unexpected faked gt format: {gt_raw}")
         return s, None
     
-    # print(f"[INFO] Splitting faked gt: {parts}") # debug
     src = parts[0].strip()
     tgt = parts[1].strip()
     
@@ -306,7 +501,7 @@ def to_png_bytes(img_array):
     buf.close()
     return data
 
-def dump_predictions(trainer, datadir, output_log, dataset_name, ids2char, det_inputs, image_bytes, idc_arity=None):
+def dump_predictions(trainer, datadir, output_log, dataset_name, ids2char, det_inputs, image_bytes, idc_arity, ids_vocab=None, ids_beam_size=0, ids_use_constraint=False):
     config_each = trainer.cfg.copy()
     if 'RatioDataSet' in config_each['Eval']['dataset']['name']:
         config_each['Eval']['dataset']['data_dir_list'] = [datadir]
@@ -322,65 +517,86 @@ def dump_predictions(trainer, datadir, output_log, dataset_name, ids2char, det_i
     num = 0
     true_num = 0
     ned_list = []
-    if idc_arity is None:
-        idc_arity = DEFAULT_IDC_ARITY
-
-    legal_token = 0
-    total_token = 0
-    legal_seq = 0
-    total_seq = 0
+    charset_logged = False
+    ids_vocab_set = set(ids_vocab) if ids_vocab is not None else None
+    beam_lengths = []
+    beam_vocab_hits = []
 
     with torch.no_grad():
         pbar = tqdm(total=len(valid_dataloader), desc=f'eval {dataset_name}', position=0, leave=True)
         sample_offset = 0
         for batch_idx, batch in enumerate(valid_dataloader):
-            # batch: [image_tensor, label_tensor, length_tensor, raw_images(list/np)]
             batch_tensor = [t.to(device) for t in batch[:3]]
             batch_numpy = [t.numpy() for t in batch[:3]]
             raw_images = batch[3] if len(batch) > 3 else None
             preds = model(batch_tensor[0], data=batch_tensor[1:])
+
+            charset = getattr(post_process, 'character', None)
+
+            if ids_use_constraint and not charset_logged and charset is not None:
+                log_charset_and_arity(charset, idc_arity, ids_vocab=ids_vocab_set, sep_token=IDS_SEP_TOKEN)
+                charset_logged = True
+
+            texts = None
+            if ids_beam_size and ids_use_constraint and charset is not None:
+                logits = preds.detach().cpu().numpy() if hasattr(preds, 'detach') else preds
+                texts = []
+                for logit in logits:  # [T, V]
+                    log_probs = logit - np.logaddexp.reduce(logit, axis=1, keepdims=True)
+                    seq, logp = ctc_prefix_beam_search_ids(log_probs, charset, ids_beam_size, idc_arity, sep_token=IDS_SEP_TOKEN)
+                    if seq is None:
+                        idx = logit.argmax(axis=1)
+                        collapsed = []
+                        prev = None
+                        for j in idx:
+                            if j == 0 or j == prev:
+                                prev = j
+                                continue
+                            collapsed.append(charset[j])
+                            prev = j
+                        prob = logit.max(axis=1)
+                        texts.append((''.join(collapsed), float(np.mean(prob))))
+                    else:
+                        texts.append((seq, float(np.exp(logp / max(len(seq), 1)))))
+
             post_result = post_process(preds, batch_numpy)
             if isinstance(post_result, tuple):
-                texts, gts = post_result
+                post_texts, gts = post_result
             else:
-                texts, gts = post_result, None
+                post_texts, gts = post_result, None
+
+            if texts is None:
+                texts = post_texts
 
             for i, (txt_ids, prob) in enumerate(texts):
                 gt_ids = ''
                 if gts is not None and i < len(gts):
                     gt_ids = gts[i][0]
 
-                # ===== 关键修改：解析 'src|||tgt'，先只用 src检测, 纠错这块还没想好。 =====
+                if ids_use_constraint:
+                    fixed_ids, modified = sanitize_ids_sequence(txt_ids, idc_arity, sep=IDS_SEP_TOKEN)
+                    txt_ids = fixed_ids
+
+                if ids_use_constraint and ids_beam_size:
+                    tokens_for_stats = [tok for tok in str(txt_ids).strip().split(IDS_SEP_TOKEN) if tok]
+                    if tokens_for_stats:
+                        beam_lengths.append(len(tokens_for_stats))
+                        if ids_vocab_set is not None:
+                            hit = sum(1 for tok in tokens_for_stats if tok in ids_vocab_set)
+                            beam_vocab_hits.append(hit / len(tokens_for_stats))
+
                 gt_src_ids, gt_tgt_ids = split_src_tgt(gt_ids)
                 gt_ids = gt_src_ids    
 
-                # IDS 合法性统计（按空格切分的每个 IDS token）
-                tokens = [tok for tok in str(txt_ids).strip().split() if tok]
-                seq_ok = True
-                for tok in tokens:
-                    ok, need, _ = validate_ids_prefix([ch for ch in tok if not ch.isspace()], idc_arity=idc_arity, require_closed=True)
-                    total_token += 1
-                    if ok:
-                        legal_token += 1
-                    else:
-                        seq_ok = False
-                if tokens:
-                    total_seq += 1
-                    if seq_ok:
-                        legal_seq += 1
-
-                # IDS -> 字符
                 txt = ids_seq_to_text(txt_ids, ids2char, unknown_char='X')
-                gt_text = ids_seq_to_text(gt_ids, ids2char, unknown_char='?')  # 应该是不会存在未知 IDS 的
+                gt_text = ids_seq_to_text(gt_ids, ids2char, unknown_char='?')
 
                 txt_norm = replace_punctuation(txt.strip())
                 gt_norm = replace_punctuation(gt_text.strip())
 
-                # 收集“X 检测”所需序列（gt_norm 应是含 X 的 src label；pred 是模型输出含/不含X）
                 det_inputs['gts'].append(gt_norm)
                 det_inputs['preds'].append(txt_norm)
 
-                # NED（字符串相似度）
                 ned = 1 - Levenshtein.normalized_distance(txt_norm, gt_norm) if gt_norm is not None else 0.0
                 ned_list.append(ned)
                 num += 1
@@ -396,7 +612,6 @@ def dump_predictions(trainer, datadir, output_log, dataset_name, ids2char, det_i
                 output_log['pred_ids'].append(str(txt_ids))
                 output_log['NED'].append(float(ned))
 
-                # 还原当前样本的图像（经过 transform），以便后续写入 XLSX
                 try:
                     sample_img = raw_images[i] if raw_images is not None else None
                     image_bytes.append(to_png_bytes(sample_img))
@@ -410,13 +625,19 @@ def dump_predictions(trainer, datadir, output_log, dataset_name, ids2char, det_i
     model.train()
     pnacc = true_num / num if num else 0.0
     ned_mean = float(np.mean(ned_list)) if ned_list else 0.0
-    legality = {
-        'legal_token': legal_token,
-        'total_token': total_token,
-        'legal_seq': legal_seq,
-        'total_seq': total_seq,
-    }
-    return pnacc, ned_mean, num, legality
+
+    beam_stats = None
+    if ids_use_constraint and ids_beam_size:
+        mean_len = float(np.mean(beam_lengths)) if beam_lengths else 0.0
+        mean_vocab_hit = float(np.mean(beam_vocab_hits)) if beam_vocab_hits else 0.0
+        beam_stats = {
+            'samples': len(beam_lengths),
+            'mean_length': mean_len,
+            'mean_vocab_hit': mean_vocab_hit,
+        }
+        print(f"[IDS] Beam outputs: samples={len(beam_lengths)}, avg_len={mean_len:.2f}, vocab_hit_rate={mean_vocab_hit * 100:.2f}%")
+
+    return pnacc, ned_mean, num, beam_stats
 
 
 def main():
@@ -428,13 +649,21 @@ def main():
     cfg.merge_dict(opt)
     cfg = prepare_cfg(cfg)
 
-    # 加载 IDS 映射
     ids_dict_path = FLAGS.get('ids_dict_path') or IDS_DICT_PATH
     _, ids2char = load_ids_mapping(ids_dict_path)
+    ids_vocab_path = FLAGS.get('ids_vocab_path') or IDS_VOCAB_PATH
+    try:
+        ids_vocab = load_vocab_from_file(ids_vocab_path)
+    except Exception:
+        ids_vocab = None
+    idc_arity = build_idc_arity_for_vocab(ids_vocab)
+    ids_vocab_set = set(ids_vocab) if ids_vocab is not None else None
+    ids_beam_size = FLAGS.get('ids_beam_size', DEFAULT_IDS_BEAM)
+    ids_use_constraint = FLAGS.get('ids_use_constraint', False)
 
     save_pred_xlsx = FLAGS.get('save_pred_xlsx')
     if save_pred_xlsx is None:
-        save_pred_xlsx = os.path.join(cfg.cfg['Global']['output_dir'], 'preds_dump_ids.xlsx')
+        save_pred_xlsx = os.path.join(cfg.cfg['Global']['output_dir'], 'preds_dump_ids_beam.xlsx')
     os.makedirs(os.path.dirname(save_pred_xlsx), exist_ok=True)
 
     trainer = Trainer(cfg, mode='eval')
@@ -470,32 +699,37 @@ def main():
     total_num = 0
     total_True_num = 0
     total_ned_list = []
-    legal_token_sum = 0
-    total_token_sum = 0
-    legal_seq_sum = 0
-    total_seq_sum = 0
 
     for data_dirs in data_dirs_list:
         for datadir in data_dirs:
             dataset_name = datadir[:-1].split('/')[-1] if datadir.endswith('/') else datadir.split('/')[-1]
-            pnacc, ned_mean, num, legality = dump_predictions(trainer, datadir, output_log, dataset_name, ids2char, det_inputs, image_bytes, idc_arity=DEFAULT_IDC_ARITY)
+            pnacc, ned_mean, num, beam_stats = dump_predictions(
+                trainer,
+                datadir,
+                output_log,
+                dataset_name,
+                ids2char,
+                det_inputs,
+                image_bytes,
+                idc_arity,
+                ids_vocab=ids_vocab_set,
+                ids_beam_size=ids_beam_size,
+                ids_use_constraint=ids_use_constraint,
+            )
             print(f"{dataset_name}:\t\t acc: {100 * pnacc:6g}, norm_edit_dis:{100 * ned_mean:6g}")
+            if beam_stats:
+                print(f"{dataset_name}: beam_samples={beam_stats['samples']}, avg_len={beam_stats['mean_length']:.2f}, vocab_hit_rate={beam_stats['mean_vocab_hit'] * 100:.2f}%")
             every_PNacc_list.append(pnacc)
             every_ned_list.append(ned_mean)
             total_num += num
             total_True_num += int(pnacc * num)
             total_ned_list.extend([ned_mean] * num)
-            legal_token_sum += legality['legal_token']
-            total_token_sum += legality['total_token']
-            legal_seq_sum += legality['legal_seq']
-            total_seq_sum += legality['total_seq']
 
     try:
         import pandas as pd
         df = pd.DataFrame(output_log)
         df.to_excel(save_pred_xlsx, index=False)
 
-        # 将图像嵌入到 Excel（列 F，标题 image）。需要 openpyxl。
         try:
             from openpyxl import load_workbook
             from openpyxl.drawing.image import Image as OpenpyxlImage
@@ -507,7 +741,6 @@ def main():
             ws.cell(row=1, column=img_col, value='image')
             img_col_letter = get_column_letter(img_col)
 
-            # 设定列宽以容纳缩略图（约 160px）
             target_px = 160
             ws.column_dimensions[img_col_letter].width = max(ws.column_dimensions[img_col_letter].width or 0, target_px / 7.0)
 
@@ -517,7 +750,6 @@ def main():
                     continue
                 img_obj = OpenpyxlImage(io.BytesIO(data))
 
-                # 先用 PIL 读取尺寸，避免访问私有属性
                 try:
                     from PIL import Image as PILImage
                     with PILImage.open(io.BytesIO(data)) as pil_img:
@@ -530,7 +762,6 @@ def main():
                     img_obj.height = h * (target_px / float(w))
                 ws.row_dimensions[r_idx].height = max(ws.row_dimensions[r_idx].height or 0, img_obj.height * 0.75)
 
-                # 直接锚定到目标单元格坐标，依赖行高/列宽约束尺寸
                 img_obj.anchor = f"{img_col_letter}{r_idx}"
                 ws.add_image(img_obj)
                 embedded += 1
@@ -550,16 +781,9 @@ def main():
         print(f"S_mean:\t\t acc: {100 * s_mean_acc:6g}, norm_edit_dis:{100 * s_mean_ned:6g}")
         print(f"S_weight:\t\t acc: {100 * s_weight_acc:6g}, norm_edit_dis:{100 * s_weight_ned:6g}")
         print(f'Predictions (with NED) saved to {save_pred_xlsx}')
-        if total_token_sum:
-            token_legal_rate = legal_token_sum / total_token_sum
-            print(f"IDS token legality: {token_legal_rate * 100:.2f}% ({legal_token_sum}/{total_token_sum})")
-        if total_seq_sum:
-            seq_legal_rate = legal_seq_sum / total_seq_sum
-            print(f"IDS sequence legality: {seq_legal_rate * 100:.2f}% ({legal_seq_sum}/{total_seq_sum})")
     except Exception as e:
         print(f'[WARN] Failed to save XLSX ({e}). Install pandas & openpyxl to enable XLSX export.')
 
-    # ========= 精简的 X 检测指标 =========
     det = calculate_cuo_metric_compact(det_inputs['gts'], det_inputs['preds'], X='X')
 
     def fmt(x):
@@ -569,8 +793,6 @@ def main():
     print(f"N_sent={det['N_sent']} | clean={det['N_clean_sent']} | error={det['N_error_sent']}")
     print(f"Char_P={fmt(det['Char_P'])}%  Char_R={fmt(det['Char_R'])}%  Char_F1={fmt(det['Char_F1'])}%")
     print(f"Sent_FA={fmt(det['Sent_FA'])}%  Sent_EM={fmt(det['Sent_EM'])}%")
-    # 如需排查，可临时打开这一行（不建议默认打印太多）
-    # print(f"(debug) Char_TP={det['Char_TP']} Char_FP={det['Char_FP']} Char_FN={det['Char_FN']}")
 
 
 if __name__ == '__main__':

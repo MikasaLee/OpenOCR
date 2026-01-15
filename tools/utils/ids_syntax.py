@@ -53,7 +53,9 @@ def validate_ids_prefix(
 
     Returns:
         (is_valid, final_need, first_invalid_index)
-        first_invalid_index is set when need goes negative; otherwise None.
+        - first_invalid_index is set when need goes negative (over-close).
+        - If require_closed and final_need > 0 (missing operands), first_invalid_index is len(seq)
+          to indicate the truncation happens after the last token.
     """
     if idc_arity is None:
         idc_arity = DEFAULT_IDC_ARITY
@@ -65,6 +67,9 @@ def validate_ids_prefix(
         if need < 0 and first_bad is None:
             first_bad = idx
             break
+    if require_closed and need > 0 and first_bad is None:
+        # Missing operands: mark the "bad" position as just after the last token
+        first_bad = len(seq)
     is_valid = (need == 0) if require_closed else (need >= 0)
     return is_valid, need, first_bad
 
@@ -91,3 +96,12 @@ def load_vocab_from_file(path: str) -> List[str]:
     """Load one token per line vocabulary file (e.g., minimal_ids_dict.txt)."""
     with open(path, "r", encoding="utf-8") as f:
         return [line.strip() for line in f if line.strip()]
+
+if __name__ == "__main__":
+    # Example usage
+    test_seq = "⿰亻⿱𠂇⿲口口口"
+    test_seq = "⿰亻⿱𠂇⿲口口"
+    tokens = list(test_seq)
+    is_valid, need, first_bad = validate_ids_prefix(tokens)
+    print(f"Sequence: {test_seq}")
+    print(f"Is valid: {is_valid}, Final need: {need}, First bad index: {first_bad}")

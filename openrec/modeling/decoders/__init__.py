@@ -29,6 +29,8 @@ class_to_module = {
     'BUSDecoder': '.bus_decoder',
     'DptrParseq': '.dptr_parseq_clip_b_decoder',
     'MDiffDecoder': '.mdiff_decoder',
+    'TAMERDecoder': '.tamer_decoder',
+    'TextIDSTreeDecoder': '.text_ids_tree_decoder', 
 }
 
 

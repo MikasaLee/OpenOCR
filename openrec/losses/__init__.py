@@ -21,6 +21,8 @@ name_to_module = {
     'VisionLANLoss': '.visionlan_loss',
     'CAMLoss': '.cam_loss',
     'MDiffLoss': '.mdiff_loss',
+    'TAMERLoss': '.tamer_loss',
+    'TextIDSTreeLoss': '.text_ids_tree_loss',
 }
 
 

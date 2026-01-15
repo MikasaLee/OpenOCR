@@ -3,12 +3,12 @@ Global:
   epoch_num: 100
   log_smooth_window: 20
   print_batch_step: 10
-  output_dir: ./outputs/output_new_visualC3_ids/crnn_ctc_test_tree/
+  output_dir: ./outputs/output_new_visualC3_ids/tamer_with_arm/
   save_epoch_step: [1, 25]
   # evaluation is run every 2000 iterations
   eval_batch_step: [0, 2000]
   eval_epoch_step: [0, 1]
-  cal_metric_during_train: False
+  cal_metric_during_train: True
   pretrained_model: 
   checkpoints:
   use_tensorboard: false
@@ -17,7 +17,7 @@ Global:
   character_dict_path: &character_dict_path ./tools/utils/dict/visual_c3_ids/minimal_ids_dict.txt
   max_text_length: &max_text_length 100
   use_space_char: &use_space_char True
-  save_res_path: ./outputs/output_new_visualC3_ids/crnn_ctc_test_tree/predicts_crnn_ctc_test_tree.txt
+  save_res_path: ./outputs/output_new_visualC3_ids/tamer_with_arm/predicts_tamer_with_arm.txt
   use_amp: True
 
 Optimizer:
@@ -33,19 +33,32 @@ LRScheduler:
 
 Architecture:
   model_type: rec
-  algorithm: CRNN
+  algorithm: CRNN  # keeping CRNN wrapper but swap encoder/decoder to TAMER variants
   Transform:
   Encoder:
-    name: ResNet_ASTER
+    name: TAMER_Encoder
+    d_model: 512
+    growth_rate: 32
+    num_layers: 4
   Decoder:
-    name: CTCDecoder
+    name: TAMERDecoder
+    nhead: 8
+    num_decoder_layers: 3
+    dim_feedforward: 1024
+    dropout: 0.3
+    dc: 64
+    cross_coverage: True   # 启用交叉注意力覆盖惩罚
+    self_coverage: True   # 如需自注意力覆盖可改为 True
+    beam_size: 1
+    max_label_length: *max_text_length
 
 Loss:
-  name: CTCLoss
-  zero_infinity: True
+  name: TAMERLoss
+  ignore_index: 0
+  lambda_struct: 1.0
 
 PostProcess:
-  name: CTCLabelDecode
+  name: TAMERLabelDecode
   character_dict_path: *character_dict_path
   use_space_char: *use_space_char
 
@@ -67,8 +80,6 @@ Train:
           use_space_char: *use_space_char
           max_text_length: *max_text_length
           char_to_ids_path: ./tools/utils/dict/visual_c3_ids/char_to_ids.txt
-          add_sos: true
-          add_eos: false
           label_mode: ids
       - RecTVResize:
           image_shape: [32, 256]
@@ -88,26 +99,24 @@ Eval:
     transforms:
       - DecodeImagePIL: # load image
           img_mode: RGB
-      # - SaveRawImageBytes:  # eval 时打开可保存原始图像
-      #   dst_key: image_raw
-      #   src_key: image
+      - SaveRawImageBytes:  # eval 时打开可保存原始图像
+          dst_key: image_raw
+          src_key: image
       - IDSTreeLabelEncode:
           character_dict_path: *character_dict_path
           use_space_char: *use_space_char
           max_text_length: *max_text_length
           char_to_ids_path: ./tools/utils/dict/visual_c3_ids/char_to_ids.txt
-          add_sos: true
-          add_eos: false
           label_mode: ids
       - RecTVResize:
           image_shape: [32, 256]
           padding: False
       - KeepKeys:
-          keep_keys: ['image', 'label', 'length']
-          # keep_keys: ['image', 'label', 'length', 'image_raw'] # eval 时打开可保存原始图像
+          # keep_keys: ['image', 'label', 'length']
+          keep_keys: ['image', 'label', 'length', 'image_raw'] # eval 时打开可保存原始图像
   loader:
     shuffle: False
     drop_last: False
     batch_size_per_card: *batch_size_per_card
     num_workers: 8
-    # collate_fn: RecWithRawCollator # eval 时打开可保存原始图像
+    collate_fn: RecWithRawCollator # eval 时打开可保存原始图像

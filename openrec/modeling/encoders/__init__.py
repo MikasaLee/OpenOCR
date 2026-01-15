@@ -25,6 +25,7 @@ name_to_module = {
     'AutoSTREncoder': '.autostr_encoder',
     'NRTREncoder': '.nrtr_encoder',
     'RepSVTREncoder': '.repvit',
+    'TAMER_Encoder': '.tamer_encoder',
 }
 
 

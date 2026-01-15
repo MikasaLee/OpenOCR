@@ -116,7 +116,12 @@ def ids_to_tree_supervision(
     if rel_map is None:
         rel_map = REL_MAP
 
-    seq: List[str] = list(ids_seq)
+    # Treat bracketed placeholders (e.g., <unk>) as single tokens to avoid
+    # splitting into characters that cannot be parsed as IDS operators/radicals.
+    if ids_seq.startswith("<") and ids_seq.endswith(">"):
+        seq: List[str] = [ids_seq]
+    else:
+        seq: List[str] = list(ids_seq)
     if add_eos:
         seq.append("<eos>")
 

@@ -30,7 +30,8 @@ log/
 *.log
 .clang-format
 .clang_format.hook
-
+.keep_gpu_alive.sh
+.gpu_keep_alive.log
 build/
 dist/
 paddleocr.egg-info/

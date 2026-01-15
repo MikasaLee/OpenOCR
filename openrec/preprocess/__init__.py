@@ -122,6 +122,7 @@ MODULE_MAPPING = {
     'CAMLabelEncode': '.cam_label_encode',
     'MDiffLabelEncode': '.mdiff_label_encode',
     'IDSTreeLabelEncode': '.ids_tree_label_encode',
+    'TextIDSTreeMultiLabelEncode': '.text_ids_tree_multi_label_encode',
     'ABINetAug': '.rec_aug',
     'BDA': '.rec_aug',
     'PARSeqAug': '.rec_aug',
