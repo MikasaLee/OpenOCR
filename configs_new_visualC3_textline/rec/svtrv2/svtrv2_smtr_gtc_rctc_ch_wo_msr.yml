@@ -3,12 +3,12 @@ Global:
   epoch_num: 100
   log_smooth_window: 20
   print_batch_step: 10
-  output_dir: ./outputs/output_new_visualC3_textline/svtrv2_smtr_gtc_rctc_ch
+  output_dir: ./outputs/output_new_visualC3_textline/svtrv2_smtr_gtc_rctc_ch_wo_msr
   save_epoch_step: [1, 25]
   # evaluation is run every 2000 iterations
   eval_batch_step: [0, 2000]
   eval_epoch_step: [0, 1]
-  cal_metric_during_train: True
+  cal_metric_during_train: False
   pretrained_model:
   checkpoints:
   use_tensorboard: false
@@ -18,7 +18,7 @@ Global:
   character_dict_path: &character_dict_path ./tools/utils/dict/visual_c3_ids/char_dict.txt # ch
   max_text_length: &max_text_length 15
   use_space_char: &use_space_char True
-  save_res_path: ./outputs/output_new_visualC3_textline/svtrv2_smtr_gtc_rctc_ch/predicts_svtrv2_smtr_gtc_rctc_ch.txt
+  save_res_path: ./outputs/output_new_visualC3_textline/svtrv2_smtr_gtc_rctc_ch_wo_msr/predicts_svtrv2_smtr_gtc_rctc_ch_wo_msr.txt
   use_amp: True
 
 Optimizer:
@@ -39,7 +39,8 @@ Architecture:
   Transform:
   Encoder:
     name: SVTRv2LNConvTwo33
-    use_pos_embed: False
+    max_sz: [32, 256]
+    use_pos_embed: True
     dims: [128, 256, 384]
     depths: [6, 6, 6]
     num_heads: [4, 8, 12]
@@ -83,12 +84,8 @@ Metric:
 
 Train:
   dataset:
-    name: RatioDataSetTVResize
-    ds_width: True
-    padding: false
-    data_dir_list: [
-      '/ipfs/lirunrui/lmdb_dataset/visual_c3_new_textline/train_lmdb',
-      ]
+    name: LMDBDataSet
+    data_dir: /ipfs/lirunrui/lmdb_dataset/visual_c3_new_textline/train_lmdb
     transforms:
       - DecodeImagePIL: # load image
           img_mode: RGB
@@ -100,32 +97,22 @@ Train:
           character_dict_path: *character_dict_path
           use_space_char: *use_space_char
           max_text_length: *max_text_length
+      - RecTVResize:
+          image_shape: [32, 256]
+          padding: False
       - KeepKeys:
           keep_keys: ['image', 'label', 'label_subs', 'label_next', 'length_subs','label_subs_pre', 'label_next_pre', 'length_subs_pre', 'length', 'ctc_label', 'ctc_length'] # dataloader will return list in this order
-  sampler:
-    name: RatioSampler
-    scales: [[128, 32]] # w, h
-    # divide_factor: to ensure the width and height dimensions can be devided by downsampling multiple
-    first_bs: &bs 256
-    fix_bs: false
-    divided_factor: [4, 16] # w, h
-    is_training: True
   loader:
     shuffle: True
-    batch_size_per_card: *bs
+    batch_size_per_card: &batch_size_per_card 256
     drop_last: True
-    max_ratio: &max_ratio 8
     num_workers: 8
 
 Eval:
   dataset:
-    name: RatioDataSetTVResize
-    ds_width: True
-    padding: False
-    data_dir_list: [
-      '/ipfs/lirunrui/lmdb_dataset/visual_c3_new_textline/test_lmdb/test_correct/'
-      ]
-    transforms:
+    name: LMDBDataSet
+    data_dir: /ipfs/lirunrui/lmdb_dataset/visual_c3_new_textline/test_lmdb/test_correct
+    transforms: 
       - DecodeImagePIL: # load image
           img_mode: RGB
       - GTCLabelEncode: # Class handling label
@@ -134,19 +121,14 @@ Eval:
           character_dict_path: *character_dict_path
           use_space_char: *use_space_char
           max_text_length: *max_text_length
+      - RecTVResize:
+          image_shape: [32, 256]
+          padding: False
       - KeepKeys:
           keep_keys: ['image', 'label', 'length', 'ctc_label', 'ctc_length'] # dataloader will return list in this order
-  sampler:
-    name: RatioSampler
-    scales: [[128, 32]] # w, h
-    # divide_factor: to ensure the width and height dimensions can be devided by downsampling multiple
-    first_bs: *bs
-    fix_bs: false
-    divided_factor: [4, 16] # w, h
-    is_training: False
   loader:
     shuffle: False
     drop_last: False
-    batch_size_per_card: *bs
-    max_ratio: *max_ratio
+    batch_size_per_card: *batch_size_per_card
     num_workers: 8
+    # collate_fn: RecWithRawCollator

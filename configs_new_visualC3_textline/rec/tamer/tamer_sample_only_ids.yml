@@ -3,7 +3,7 @@ Global:
   epoch_num: 100
   log_smooth_window: 20
   print_batch_step: 10
-  output_dir: ./outputs/output_new_visualC3_textline/tamer/
+  output_dir: ./outputs/output_new_visualC3_textline/tamer_only_ids/
   save_epoch_step: [1, 25]
   # evaluation is run every 2000 iterations
   eval_batch_step: [0, 2000]
@@ -18,11 +18,12 @@ Global:
   character_dict_path: &character_dict_path ./tools/utils/dict/visual_c3_ids/char_dict.txt # ch
   ids_dict_path: &ids_dict_path ./tools/utils/dict/visual_c3_ids/minimal_ids_dict.txt
   char_to_ids_path: &char_to_ids_path ./tools/utils/dict/visual_c3_ids/char_to_ids.txt
-  max_text_length: &max_text_length 15   # 文本序列最大长度
+  max_text_length: &max_text_length 100   # 文本序列最大长度
   max_ids_length: &max_ids_length 100     # IDS 序列最大长度（通常更长）
   use_space_char: &use_space_char True
-  save_res_path: ./outputs/output_new_visualC3_textline/tamer/predicts_tamer.txt
+  save_res_path: ./outputs/output_new_visualC3_textline/tamer_only_ids/predicts_tamer.txt
   use_amp: True
+  find_unused_parameters: True 
 
 Optimizer:
   name: AdamW
@@ -45,7 +46,7 @@ Architecture:
     growth_rate: 32
     num_layers: 4
   Decoder:
-    name: TextIDSTreeDecoder
+    name: TAMERDecoder
     nhead: 8
     num_decoder_layers: 3
     dim_feedforward: 1024
@@ -53,18 +54,33 @@ Architecture:
     dc: 64
     cross_coverage: False   # 启用交叉注意力覆盖惩罚
     self_coverage: False   # 如需自注意力覆盖可改为 True
-    max_text_length: *max_text_length
-    max_ids_length: *max_ids_length
-    text_vocab_path: *character_dict_path
-    ids_vocab_path: *ids_dict_path
-    use_space_char: *use_space_char
+    max_label_length: *max_text_length
+  # Decoder:
+  #   name: TextIDSTreeDecoder
+  #   nhead: 8
+  #   num_decoder_layers: 3
+  #   dim_feedforward: 1024
+  #   dropout: 0.3
+  #   dc: 64
+  #   cross_coverage: False   # 启用交叉注意力覆盖惩罚
+  #   self_coverage: False   # 如需自注意力覆盖可改为 True
+  #   max_text_length: *max_text_length
+  #   max_ids_length: *max_ids_length
+  #   text_vocab_path: *character_dict_path
+  #   ids_vocab_path: *ids_dict_path
+  #   use_space_char: *use_space_char
+
+# Loss:
+#   name: TextIDSTreeLoss # 可以通过权重设置来只训练不同分支
+#   ignore_index: 0
+#   lambda_text: 0.0   
+#   lambda_struct: 1.0
+#   lambda_ids: 1.0
 
 Loss:
-  name: TextIDSTreeLoss
+  name: TAMERLoss
   ignore_index: 0
   lambda_struct: 1.0
-  lambda_text: 1.0
-  lambda_ids: 1.0
 
 PostProcess:
   name: TextIDSLabelDecode
@@ -75,7 +91,7 @@ PostProcess:
 
 Metric:
   name: RecTextIDSMetric
-  main_indicator: acc
+  main_indicator: ids_acc  # acc -> ids_acc
   max_len: *max_text_length     # 文本分支最大长度
   max_len_ids: *max_ids_length  # IDS分支最大长度
   # is_filter: True
@@ -113,9 +129,9 @@ Eval:
     transforms:
       - DecodeImagePIL: # load image
           img_mode: RGB
-      - SaveRawImageBytes:  # eval 时打开可保存原始图像 # [rank0]: AttributeError: 'list' object has no attribute 'to' 
-          dst_key: image_raw
-          src_key: image
+      # - SaveRawImageBytes:  # eval 时打开可保存原始图像
+      #     dst_key: image_raw
+      #     src_key: image
       - TextIDSTreeMultiLabelEncode:
           character_dict_path: *character_dict_path
           ids_dict_path: *ids_dict_path
@@ -127,11 +143,11 @@ Eval:
           image_shape: [32, 256]
           padding: False
       - KeepKeys:
-          # keep_keys: ['image', 'label', 'length', 'ids_label', 'ids_length', 'tree_parents_label'] 
-          keep_keys: ['image', 'label', 'length', 'ids_label', 'ids_length', 'tree_parents_label', 'image_raw'] # eval 时打开可保存原始图像
+          keep_keys: ['image', 'label', 'length', 'ids_label', 'ids_length', 'tree_parents_label'] 
+          # keep_keys: ['image', 'label', 'length', 'image_raw'] # eval 时打开可保存原始图像
   loader:
     shuffle: False
     drop_last: False
     batch_size_per_card: *batch_size_per_card
     num_workers: 4  # 临时设为0以排除DataLoader多进程问题
-    collate_fn: RecWithRawCollator # eval 时打开可保存原始图像
+    # collate_fn: RecWithRawCollator # eval 时打开可保存原始图像

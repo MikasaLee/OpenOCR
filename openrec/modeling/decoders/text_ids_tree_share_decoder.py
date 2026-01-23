@@ -10,8 +10,8 @@ from .tamer_decoder import (
     AttentionRefinementModule,
 )
 
-
-class TextIDSTreeDecoder(nn.Module):
+# 共享解码器。
+class TextIDSTreeShareDecoder(nn.Module):
     """Shared decoder producing text logits, IDS logits, and IDS structure logits."""
 
     def __init__(
@@ -33,6 +33,7 @@ class TextIDSTreeDecoder(nn.Module):
         **kwargs,
     ):
         super().__init__()
+        
         # Strict alignment with BaseRecLabelDecode/CTCLabelEncode to avoid index shift
         def _infer_vocab_size(path: Optional[str]) -> int:
             if path is None:
@@ -51,6 +52,7 @@ class TextIDSTreeDecoder(nn.Module):
              text_vocab_size = out_channels
         else:
              text_vocab_size = _infer_vocab_size(text_vocab_path)
+             
         ids_vocab_size = _infer_vocab_size(ids_vocab_path)
         self.ignore_index = 0
         self.bos_id = 1
@@ -70,16 +72,14 @@ class TextIDSTreeDecoder(nn.Module):
         self.ids_norm = nn.LayerNorm(d_model)
 
         arm_factory = lambda: AttentionRefinementModule(nhead, dc, cross_coverage, self_coverage) if (cross_coverage or self_coverage) else None
-        self.text_decoder = TransformerDecoder(
+        
+        # SHARED DECODER for both branches
+        self.decoder = TransformerDecoder(
             TransformerDecoderLayer(d_model, nhead, dim_feedforward, dropout),
             num_layers=num_decoder_layers,
             arm=arm_factory(),
         )
-        self.ids_decoder = TransformerDecoder(
-            TransformerDecoderLayer(d_model, nhead, dim_feedforward, dropout),
-            num_layers=num_decoder_layers,
-            arm=arm_factory(),
-        )
+        
         self.proj_text = nn.Linear(d_model, text_vocab_size)
         self.proj_ids = nn.Linear(d_model, ids_vocab_size)
         self.struct_enc = nn.TransformerEncoder(
@@ -129,6 +129,7 @@ class TextIDSTreeDecoder(nn.Module):
         tgt_emb = embed(tgt_ids)
         tgt_emb = pos_enc(tgt_emb)
         tgt_emb = norm(tgt_emb)
+        # Use simple 'decoder' call which is the shared instance
         out = decoder(
             tgt=tgt_emb.transpose(0, 1),
             memory=memory.transpose(0, 1),
@@ -179,7 +180,7 @@ class TextIDSTreeDecoder(nn.Module):
             self.proj_text,
             self.text_pos_enc,
             self.text_norm,
-            self.text_decoder,
+            self.decoder, # Shared
         )
 
         # ids branch
@@ -194,10 +195,9 @@ class TextIDSTreeDecoder(nn.Module):
             self.proj_ids,
             self.ids_pos_enc,
             self.ids_norm,
-            self.ids_decoder,
+            self.decoder, # Shared
         )
         sim_ids = self._struct_sim(hidden_ids, pad_ids)
-        # print(f"Logits Text Shape: {logits_text.shape}, Logits IDS Shape: {logits_ids.shape}, SIM IDS Shape: {sim_ids.shape}")
         return logits_text, logits_ids, sim_ids
 
     def forward_test(self, x):
@@ -243,7 +243,7 @@ class TextIDSTreeDecoder(nn.Module):
             self.proj_text,
             self.text_pos_enc,
             self.text_norm,
-            self.text_decoder,
+            self.decoder, # Shared
             mem_text,
             h_text,
             mem_mask_text,
@@ -254,7 +254,7 @@ class TextIDSTreeDecoder(nn.Module):
             self.proj_ids,
             self.ids_pos_enc,
             self.ids_norm,
-            self.ids_decoder,
+            self.decoder, # Shared
             mem_ids,
             h_ids,
             mem_mask_ids,
@@ -262,26 +262,19 @@ class TextIDSTreeDecoder(nn.Module):
         return probs_text, probs_ids
 
     def forward(self, x, data=None):
-        # if isinstance(x, (tuple, list)): # debug
-        #     if len(x) == 2:
-        #         feat2d, mask2d = x
-        #         b, h, w, c = feat2d.shape
-        #         print(f"feat2d shape: {feat2d.shape}")
-        #     elif len(x) == 3:
-        #         mem, hw, mem_mask = x
-        #         print(f"mem shape: {mem.shape}") 
         if self.training:
             return self.forward_train(x, data)
         else:
             return self.forward_test(x)
         
+
 if __name__ == "__main__":
     import torch
     import sys
     import os
     import shutil
 
-    print("Initializing TextIDSTreeDecoder Output Check...")
+    print("Initializing TextIDSTreeShareDecoder Output Check...")
     
     device = "cuda" if torch.cuda.is_available() else "cpu"
     print(f"Using device: {device}")
@@ -313,7 +306,7 @@ if __name__ == "__main__":
         sys.exit(1)
 
     try:
-        decoder = TextIDSTreeDecoder(
+        decoder = TextIDSTreeShareDecoder(
             in_channels=d_model,
             text_vocab_path=text_vocab_path,
             ids_vocab_path=ids_vocab_path,

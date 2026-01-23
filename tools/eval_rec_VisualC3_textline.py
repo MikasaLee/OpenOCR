@@ -16,6 +16,159 @@ from tools.data import build_dataloader
 from tools.engine.config import Config
 from tools.engine.trainer import Trainer
 from tools.utility import ArgsParser
+from tools.utils.ids_syntax import validate_ids_prefix, DEFAULT_IDC_ARITY
+
+
+# =========================
+# 错字检测指标（对齐 + 精简统计）
+# =========================
+def align_by_opcodes(gt: str, pred: str, gap_char=None):
+    """
+    将 gt/pred 做全局对齐，返回列对齐序列列表，每项为 (gt_char/gap, pred_char/gap, gt_idx or None)。
+    - gt_idx 为该列对应的原始 gt 索引；若该列是 pred 插入（gt 缺失）则为 None。
+    """
+    aligned = []
+    for tag, i1, i2, j1, j2 in Levenshtein.opcodes(gt, pred):
+        if tag in ("equal", "replace"):
+            len_a = i2 - i1
+            len_b = j2 - j1
+            m = min(len_a, len_b)
+            for k in range(m):
+                gi = i1 + k
+                pj = j1 + k
+                aligned.append((gt[gi], pred[pj], gi))
+            if len_a > m:
+                for gi in range(i1 + m, i2):
+                    aligned.append((gt[gi], gap_char, gi))
+            if len_b > m:
+                for pj in range(j1 + m, j2):
+                    aligned.append((gap_char, pred[pj], None))
+        elif tag == "delete":
+            for gi in range(i1, i2):
+                aligned.append((gt[gi], gap_char, gi))
+        elif tag == "insert":
+            for pj in range(j1, j2):
+                aligned.append((gap_char, pred[pj], None))
+        else:
+            raise ValueError(f"Unknown opcode tag: {tag}")
+    return aligned
+
+
+def _safe_div(num, den):
+    return None if den == 0 else (num / den)
+
+
+def _safe_pct(num, den):
+    v = _safe_div(num, den)
+    return None if v is None else (v * 100.0)
+
+
+def calculate_cuo_metric_compact(gt_sentences, pred_sentences, X='X'):
+    """
+    仅评 X（错字位点）的检测，输出精简但高信息量的指标：
+    - N_clean_sent: GT 无 X 的句子数
+    - N_error_sent: GT 有 X 的句子数
+    - Char_P / Char_R / Char_F1:
+        precision = TP/(TP+FP), recall = TP/(TP+FN)
+    - Sent_FA: clean sentence 上预测出任意 X 的比例（误报率）
+    - Sent_EM: error sentence 上 exact match（X位置集合完全一致且不能多报/插入X）的比例
+    """
+    n = min(len(gt_sentences), len(pred_sentences))
+    if n == 0:
+        return {}
+
+    n_clean_sent = 0
+    n_error_sent = 0
+    sent_fa = 0   # false alarm on clean sentences
+    sent_em = 0   # exact match on error sentences
+
+    # char-level TP/FP/FN（只针对 X）
+    tp = 0
+    fp = 0
+    fn = 0
+
+    for gt, pred in zip(gt_sentences[:n], pred_sentences[:n]):
+        aligned = align_by_opcodes(gt, pred, gap_char=None)
+
+        gt_x_pos = set()
+        pred_x_pos = set()
+        ins_x_cnt = 0
+
+        for gch, pch, gi in aligned:
+            g_is_x = (gch == X)
+            p_is_x = (pch == X)
+
+            # 统计位置集合（以 GT 坐标为准）
+            if gi is not None and g_is_x:
+                gt_x_pos.add(gi)
+
+            if p_is_x:
+                if gi is None:
+                    # pred 在 GT gap（插入列）上输出 X -> 一定是多报(FP) + exact match 必失败
+                    ins_x_cnt += 1
+                else:
+                    pred_x_pos.add(gi)
+
+            # char-level 计数（仅 X 类）
+            if gi is None:
+                # 插入列：只要插入的是 X，就算 FP
+                if p_is_x:
+                    fp += 1
+            else:
+                if g_is_x and p_is_x:
+                    tp += 1
+                elif (not g_is_x) and p_is_x:
+                    fp += 1
+                elif g_is_x and (not p_is_x):
+                    fn += 1
+
+        gt_has_x = (len(gt_x_pos) > 0)
+        pred_has_x = (len(pred_x_pos) > 0) or (ins_x_cnt > 0)
+
+        if gt_has_x:
+            n_error_sent += 1
+            # exact match：X位置集合完全一致，且不能多报（含插入列X）
+            if pred_has_x and (ins_x_cnt == 0) and (pred_x_pos == gt_x_pos):
+                sent_em += 1
+        else:
+            n_clean_sent += 1
+            # clean sentence 上只要预测出任意 X 就算误报
+            if pred_has_x:
+                sent_fa += 1
+
+    # char-level metrics
+    char_p = _safe_pct(tp, tp + fp)
+    char_r = _safe_pct(tp, tp + fn)
+    char_f1 = None
+    if char_p is not None and char_r is not None and (char_p + char_r) > 0:
+        char_f1 = 2 * char_p * char_r / (char_p + char_r)
+
+    # sentence-level metrics
+    sent_fa_rate = _safe_pct(sent_fa, n_clean_sent)  # clean 误报率
+    sent_em_rate = _safe_pct(sent_em, n_error_sent)  # error exact-match 率
+
+    return {
+        "N_sent": n,
+        "N_clean_sent": n_clean_sent,
+        "N_error_sent": n_error_sent,
+        "Char_P": char_p,
+        "Char_R": char_r,
+        "Char_F1": char_f1,
+        "Sent_FA": sent_fa_rate,
+        "Sent_EM": sent_em_rate,
+        # 下面三项只为方便定位（可不打印）
+        "Char_TP": tp,
+        "Char_FP": fp,
+        "Char_FN": fn,
+    }
+
+
+def maybe_ids_tokens(tokens):
+    """简单启发：若 token 中含常见 IDC 符号，则认为是 IDS 输出。否则视为普通文本，不做合法性统计。"""
+    if not tokens:
+        return False
+    idc_chars = {'⿰', '⿱', '⿲', '⿳', '⿴', '⿵', '⿶', '⿷', '⿸', '⿹', '⿺', '⿻'}
+    return any(any(ch in idc_chars for ch in tok) for tok in tokens)
 
 
 def replace_punctuation(text: str) -> str:
@@ -98,7 +251,7 @@ def prepare_cfg(cfg):
     return cfg
 
 
-def dump_predictions(trainer, datadir, output_log, dataset_name, image_bytes):
+def dump_predictions(trainer, datadir, output_log, dataset_name, image_bytes, det_inputs=None, idc_arity=None):
     config_each = trainer.cfg.copy()
     if 'RatioDataSet' in config_each['Eval']['dataset']['name']:
         config_each['Eval']['dataset']['data_dir_list'] = [datadir]
@@ -116,6 +269,12 @@ def dump_predictions(trainer, datadir, output_log, dataset_name, image_bytes):
     tgt_true_num = 0
     src_ned_list = []
     tgt_ned_list = []
+    if idc_arity is None:
+        idc_arity = DEFAULT_IDC_ARITY
+    legal_token = 0
+    total_token = 0
+    legal_seq = 0
+    total_seq = 0
     with torch.no_grad():
         pbar = tqdm(total=len(valid_dataloader), desc=f'eval {dataset_name}', position=0, leave=True)
         sample_offset = 0
@@ -126,7 +285,7 @@ def dump_predictions(trainer, datadir, output_log, dataset_name, image_bytes):
             preds = model(batch_tensor[0], data=batch_tensor[1:])
             post_result = post_process(preds, batch_numpy)
             texts, gts = post_result if isinstance(post_result, tuple) else (post_result, None)
-
+            # print(f"texts:{texts}, gts:{gts}")  # debug
             for i, (txt, prob) in enumerate(texts):
                 gt_text = ''
                 if gts is not None and i < len(gts):
@@ -145,6 +304,27 @@ def dump_predictions(trainer, datadir, output_log, dataset_name, image_bytes):
                     src_true_num += 1
                 if int(tgt_ned) == 1:
                     tgt_true_num += 1
+
+                # IDS 合法性统计（若模型输出为 IDS 序列，则按空格切分 token 逐一校验）
+                tokens = [tok for tok in str(txt).strip().split() if tok]
+                if maybe_ids_tokens(tokens):
+                    seq_ok = True
+                    for tok in tokens:
+                        ok, need, _ = validate_ids_prefix([ch for ch in tok if not ch.isspace()], idc_arity=idc_arity, require_closed=True)
+                        total_token += 1
+                        if ok:
+                            legal_token += 1
+                        else:
+                            seq_ok = False
+                    if tokens:
+                        total_seq += 1
+                        if seq_ok:
+                            legal_seq += 1
+
+                # 收集错字检测输入（默认以 src 标签中的 X 作为错位标记）
+                if det_inputs is not None:
+                    det_inputs['gts'].append(gt_src_norm)
+                    det_inputs['preds'].append(txt_norm)
 
                 img_name = f"{dataset_name}_{sample_offset + i}"
                 output_log['img_name'].append(img_name)
@@ -167,7 +347,13 @@ def dump_predictions(trainer, datadir, output_log, dataset_name, image_bytes):
     tgt_pnacc = tgt_true_num / num if num else 0.0
     src_ned_mean = float(np.mean(src_ned_list)) if src_ned_list else 0.0
     tgt_ned_mean = float(np.mean(tgt_ned_list)) if tgt_ned_list else 0.0
-    return src_pnacc, tgt_pnacc, src_ned_mean, tgt_ned_mean, num
+    legality = {
+        'legal_token': legal_token,
+        'total_token': total_token,
+        'legal_seq': legal_seq,
+        'total_seq': total_seq,
+    }
+    return src_pnacc, tgt_pnacc, src_ned_mean, tgt_ned_mean, num, legality
 
 
 def main():
@@ -209,6 +395,7 @@ def main():
         ('NED_src', []),
         ('NED_tgt', []),
     ])
+    det_inputs = {'gts': [], 'preds': []}
     image_bytes = []
     every_src_PNacc_list = []
     every_tgt_PNacc_list = []
@@ -219,10 +406,14 @@ def main():
     total_tgt_True_num = 0
     total_src_ned_list = []
     total_tgt_ned_list = []
+    legal_token_sum = 0
+    total_token_sum = 0
+    legal_seq_sum = 0
+    total_seq_sum = 0
     for data_dirs in data_dirs_list:
         for datadir in data_dirs:
             dataset_name = datadir[:-1].split('/')[-1] if datadir.endswith('/') else datadir.split('/')[-1]
-            src_pnacc, tgt_pnacc, src_ned_mean, tgt_ned_mean, num = dump_predictions(trainer, datadir, output_log, dataset_name, image_bytes)
+            src_pnacc, tgt_pnacc, src_ned_mean, tgt_ned_mean, num, legality = dump_predictions(trainer, datadir, output_log, dataset_name, image_bytes, det_inputs=det_inputs, idc_arity=DEFAULT_IDC_ARITY)
             print(f"{dataset_name}:\t\t src_acc: {100 * src_pnacc:6g}, src_norm_edit_dis:{100 * src_ned_mean:6g}, tgt_acc: {100 * tgt_pnacc:6g}, tgt_norm_edit_dis:{100 * tgt_ned_mean:6g}")
             every_src_PNacc_list.append(src_pnacc)
             every_tgt_PNacc_list.append(tgt_pnacc)
@@ -233,6 +424,10 @@ def main():
             total_src_ned_list.extend([src_ned_mean] * num)
             total_tgt_True_num += int(tgt_pnacc * num)
             total_tgt_ned_list.extend([tgt_ned_mean] * num)
+            legal_token_sum += legality['legal_token']
+            total_token_sum += legality['total_token']
+            legal_seq_sum += legality['legal_seq']
+            total_seq_sum += legality['total_seq']
 
     try:
         import pandas as pd
@@ -289,8 +484,32 @@ def main():
         print(f"S_mean:\t\t src_acc: {100 * s_mean_src_acc:6g}, src_norm_edit_dis:{100 * s_mean_src_ned:6g}, tgt_acc: {100 * s_mean_tgt_acc:6g}, tgt_norm_edit_dis:{100 * s_mean_tgt_ned:6g}")
         print(f"S_weight:\t\t src_acc: {100 * s_weight_src_acc:6g}, src_norm_edit_dis:{100 * s_weight_src_ned:6g}, tgt_acc: {100 * s_weight_tgt_acc:6g}, tgt_norm_edit_dis:{100 * s_weight_tgt_ned:6g}")
         print(f'Predictions (with NED) saved to {save_pred_xlsx}')
+        if total_token_sum:
+            token_legal_rate = legal_token_sum / total_token_sum
+            print(f"IDS token legality: {token_legal_rate * 100:.2f}% ({legal_token_sum}/{total_token_sum})")
+        if total_seq_sum:
+            seq_legal_rate = legal_seq_sum / total_seq_sum
+            print(f"IDS sequence legality: {seq_legal_rate * 100:.2f}% ({legal_seq_sum}/{total_seq_sum})")
+        if (total_token_sum == 0) and (total_seq_sum == 0):
+            print("[INFO] IDS legality skipped (no IDC tokens detected in predictions).")
     except Exception as e:
         print(f'[WARN] Failed to save XLSX ({e}). Install pandas & openpyxl to enable XLSX export.')
+
+    # ========= 精简的错字检测指标（使用标签中的 X） =========
+    det = calculate_cuo_metric_compact(det_inputs['gts'], det_inputs['preds'], X='X')
+
+    def fmt(x):
+        return "N/A" if x is None else f"{x:.3f}"
+
+    print("\nCuo detection metrics (compact, mixed clean+error):")
+    if det:
+        print(f"N_sent={det['N_sent']} | clean={det['N_clean_sent']} | error={det['N_error_sent']}")
+        print(f"Char_P={fmt(det['Char_P'])}%  Char_R={fmt(det['Char_R'])}%  Char_F1={fmt(det['Char_F1'])}%")
+        print(f"Sent_FA={fmt(det['Sent_FA'])}%  Sent_EM={fmt(det['Sent_EM'])}%")
+        # 如需排查，可临时打开这一行
+        # print(f"(debug) Char_TP={det['Char_TP']} Char_FP={det['Char_FP']} Char_FN={det['Char_FN']}")
+    else:
+        print("No sentences to evaluate cuo detection.")
 
 
 if __name__ == '__main__':

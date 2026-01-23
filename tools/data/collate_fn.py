@@ -59,11 +59,25 @@ class RecWithRawCollator(object):
     def __call__(self, batch):
         from torch.utils.data._utils.collate import default_collate
 
-        imgs = default_collate([b[0] for b in batch])
-        labels = default_collate([b[1] for b in batch])
-        lengths = default_collate([b[2] for b in batch])
-        raws = [b[3] for b in batch]
-        return [imgs, labels, lengths, raws]
+        if not batch:
+            return []
+        
+        num_fields = len(batch[0])
+        output = []
+        for i in range(num_fields):
+            column = [b[i] for b in batch]
+            sample = column[0]
+            # Heuristic: try to collate numeric/tensor/array types
+            if isinstance(sample, (np.ndarray, torch.Tensor, numbers.Number)):
+                try:
+                    output.append(default_collate(column))
+                except Exception:
+                    # Fallback if dimensions mismatch or other collate error
+                    output.append(column)
+            else:
+                # Keep as list (e.g. raw bytes, strings)
+                output.append(column)
+        return output
 
 
 class DyMaskCollator(object):

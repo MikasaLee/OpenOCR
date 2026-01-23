@@ -18,12 +18,12 @@ class TextIDSTreeLoss(nn.Module):
         # logits: [B, L, V], labels: [B, 2+max_len]
         B, L, V = logits.shape
         max_len = int(lengths.max().item())
-        pred_seq = logits[:, :-1, :]  # align to target next token
-        tgt_seq = labels[:, 1:2 + max_len]
+        pred_seq = logits[:, :-1, :].contiguous()    # align to target next token
+        tgt_seq = labels[:, 1:2 + max_len].contiguous()
         if pred_seq.size(1) != tgt_seq.size(1):
             pred_seq = pred_seq[:, :tgt_seq.size(1), :]
-        loss = self.seq_ce(pred_seq.reshape(-1, V), tgt_seq.reshape(-1))
-        valid = (tgt_seq != self.ignore_index).reshape(-1)
+        loss = self.seq_ce(pred_seq.reshape(-1, V), tgt_seq.view(-1))
+        valid = (tgt_seq != self.ignore_index).view(-1)
         loss = loss.masked_select(valid).mean() if valid.any() else loss.mean()
         return loss, max_len
 
@@ -79,9 +79,23 @@ class TextIDSTreeLoss(nn.Module):
         ids_lengths = batch[4]
         tree_parents = batch[5]
 
-        text_loss, _ = self._seq_ce(logits_text, text_labels, text_lengths)
-        ids_loss, max_ids = self._seq_ce(logits_ids, ids_labels, ids_lengths)
-        struct_loss = self._struct_ce(sim_ids, tree_parents, ids_lengths, max_ids)
+        # 保险起见，
+        if self.lambda_text != 0:
+            text_loss, _ = self._seq_ce(logits_text, text_labels, text_lengths)
+        else: 
+            text_loss = torch.tensor(0.0, device=logits_text.device)
+
+        if self.lambda_ids != 0:
+            ids_loss, max_ids = self._seq_ce(logits_ids, ids_labels, ids_lengths)
+        else:
+            ids_loss = torch.tensor(0.0, device=logits_ids.device)
+            max_ids = 0
+
+        if self.lambda_struct != 0:
+            struct_loss = self._struct_ce(sim_ids, tree_parents, ids_lengths, max_ids)
+        else:
+            struct_loss = torch.tensor(0.0, device=sim_ids.device)
+
         loss = self.lambda_text * text_loss + self.lambda_ids * ids_loss + self.lambda_struct * struct_loss
         return {
             'loss': loss,

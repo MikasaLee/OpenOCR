@@ -194,6 +194,8 @@ class TextIDSTreeMultiLabelEncode(BaseRecLabelEncode):
         tokens.append("<eos>")
         parents.append(-1)
         return tokens, parents
+    
+
 if __name__ == "__main__":
     import os
     import sys
@@ -232,7 +234,7 @@ if __name__ == "__main__":
         sys.exit(1)
 
     # Test samples
-    test_labels = ["今天天气", "我", "我的", "test", "赢", "aaaa"] 
+    test_labels = ["一到春天，", "我", "我的", "test", "赢", "aaaa"] 
     for label in test_labels:
         data = {"label": label}
         print(f"\n--- Testing label: {label} ---")
@@ -251,6 +253,18 @@ if __name__ == "__main__":
 
             unk_cnt = np.sum(data_copy["ids_label"] == encoder.ids_UNK)
             print(f"UNK count in IDS: {unk_cnt}")
+
+            # 可读的树 token 与父指针（截取有效长度部分）
+            tree_tokens_str = data_copy.get("tree_tokens", [])
+            parents_full = data_copy["tree_parents_label"].tolist()
+            valid_len = int(data_copy["ids_length"]) + 2  # 包含 <sos>/<eos>
+            tokens_trim = tree_tokens_str[:valid_len]
+            parents_trim = parents_full[:valid_len]
+            print("Tree tokens (trimmed):", tokens_trim)
+            print("Tree parents (trimmed):", parents_trim)
+            print("Tree idx->token mapping (trimmed):")
+            for i, (tok, p) in enumerate(zip(tokens_trim, parents_trim)):
+                print(f"  idx={i:02d} tok={tok} parent={p}")
             
         except Exception as e:
             import traceback

@@ -26,6 +26,7 @@ name_to_module = {
     'NRTREncoder': '.nrtr_encoder',
     'RepSVTREncoder': '.repvit',
     'TAMER_Encoder': '.tamer_encoder',
+    'TAMER_DualEncoder': '.tamer_dual_encoder',
 }
 
 

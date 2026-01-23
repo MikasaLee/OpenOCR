@@ -180,7 +180,12 @@ class CTCDecoder(nn.Module):
         self.return_feats = return_feats
 
     def forward(self, x, data=None):
-
+        if isinstance(x, (tuple, list)):
+            if len(x) == 2:
+                x, mask2d = x
+                b, h, w, c = x.shape
+                x = x.view(b, h * w, c)
+            
         if self.svtr_encoder is not None:
             x = self.svtr_encoder(x)
             x = x.flatten(2).transpose(1, 2)
@@ -199,5 +204,4 @@ class CTCDecoder(nn.Module):
         if not self.training:
             predicts = F.softmax(predicts, dim=2)
             result = predicts
-
         return result

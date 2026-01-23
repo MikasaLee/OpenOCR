@@ -125,8 +125,9 @@ class Trainer(object):
                                 self.lr_scheduler)
 
         if self.cfg['Global']['distributed']:
+            find_unused_parameters = self.cfg['Global'].get('find_unused_parameters', False)
             self.model = torch.nn.parallel.DistributedDataParallel(
-                self.model, [self.local_rank], find_unused_parameters=False)
+                self.model, [self.local_rank], find_unused_parameters=find_unused_parameters)
 
         # amp
         self.scaler = (torch.cuda.amp.GradScaler() if self.cfg['Global'].get(

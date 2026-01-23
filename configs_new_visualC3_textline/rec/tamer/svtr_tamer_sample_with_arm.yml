@@ -3,7 +3,7 @@ Global:
   epoch_num: 100
   log_smooth_window: 20
   print_batch_step: 10
-  output_dir: ./outputs/output_new_visualC3_textline/tamer/
+  output_dir: ./outputs/output_new_visualC3_textline/tamer_svtr_with_arm/
   save_epoch_step: [1, 25]
   # evaluation is run every 2000 iterations
   eval_batch_step: [0, 2000]
@@ -21,7 +21,7 @@ Global:
   max_text_length: &max_text_length 15   # 文本序列最大长度
   max_ids_length: &max_ids_length 100     # IDS 序列最大长度（通常更长）
   use_space_char: &use_space_char True
-  save_res_path: ./outputs/output_new_visualC3_textline/tamer/predicts_tamer.txt
+  save_res_path: ./outputs/output_new_visualC3_textline/tamer_svtr_with_arm/predicts_tamer.txt
   use_amp: True
 
 Optimizer:
@@ -40,10 +40,18 @@ Architecture:
   algorithm: TAMER  # 使用 TAMER 算法，匹配 TAMER_Encoder 和 TextIDSTreeDecoder
   Transform:
   Encoder:
-    name: TAMER_Encoder
-    d_model: 512
-    growth_rate: 32
-    num_layers: 4
+    name: SVTRNet
+    img_size: [32, 256]
+    out_char_num: 32
+    out_channels: 256
+    patch_merging: 'Conv'
+    embed_dim: [128, 256, 384]
+    depth: [6, 6, 6]
+    num_heads: [4, 8, 12]
+    mixer: ['Conv','Conv','Conv','Conv','Conv','Conv', 'Conv','Conv', 'Global','Global','Global','Global','Global','Global','Global','Global','Global','Global']
+    local_mixer: [[5, 5], [5, 5], [5, 5]]
+    last_stage: False
+    prenorm: True
   Decoder:
     name: TextIDSTreeDecoder
     nhead: 8
@@ -51,8 +59,8 @@ Architecture:
     dim_feedforward: 1024
     dropout: 0.3
     dc: 64
-    cross_coverage: False   # 启用交叉注意力覆盖惩罚
-    self_coverage: False   # 如需自注意力覆盖可改为 True
+    cross_coverage: True   # 启用交叉注意力覆盖惩罚
+    self_coverage: True   # 如需自注意力覆盖可改为 True
     max_text_length: *max_text_length
     max_ids_length: *max_ids_length
     text_vocab_path: *character_dict_path
@@ -62,8 +70,8 @@ Architecture:
 Loss:
   name: TextIDSTreeLoss
   ignore_index: 0
-  lambda_struct: 1.0
   lambda_text: 1.0
+  lambda_struct: 1.0
   lambda_ids: 1.0
 
 PostProcess:
@@ -113,7 +121,7 @@ Eval:
     transforms:
       - DecodeImagePIL: # load image
           img_mode: RGB
-      - SaveRawImageBytes:  # eval 时打开可保存原始图像 # [rank0]: AttributeError: 'list' object has no attribute 'to' 
+      - SaveRawImageBytes:  # eval 时打开可保存原始图像
           dst_key: image_raw
           src_key: image
       - TextIDSTreeMultiLabelEncode:

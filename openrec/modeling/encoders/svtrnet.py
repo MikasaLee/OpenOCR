@@ -572,3 +572,55 @@ class SVTRNet(nn.Module):
         if self.use_lenhead:
             return x, len_x
         return x
+
+
+def main():
+    """
+    Debug main function for SVTRNet model using parameters from config file
+    """
+    # Parameters from config file: /lirunrui/OpenOCR/configs_new_visualC3_textline/rec/svtr/svtr_base_ctc.yml
+    model_params = {
+        'img_size': [32, 256],
+        'out_char_num': 32,
+        'out_channels': 256,
+        'patch_merging': 'Conv',
+        'embed_dim': [128, 256, 384],
+        'depth': [6, 6, 6],
+        'num_heads': [4, 8, 12],
+        'mixer': ['Conv','Conv','Conv','Conv','Conv','Conv', 'Conv','Conv', 'Global','Global','Global','Global','Global','Global','Global','Global','Global','Global'],
+        'local_mixer': [[5, 5], [5, 5], [5, 5]],
+        'last_stage': True,
+        'prenorm': True
+    }
+    
+    # Create model instance
+    model = SVTRNet(**model_params)
+    
+    # Print model architecture
+    # print("SVTRNet Model Architecture:")
+    # print(model)
+    # print("\n")
+    
+    # Count parameters
+    total_params = sum(p.numel() for p in model.parameters())
+    trainable_params = sum(p.numel() for p in model.parameters() if p.requires_grad)
+    print(f"Total parameters: {total_params:,}")
+    print(f"Trainable parameters: {trainable_params:,}")
+    print("\n")
+    
+    # Test with sample input
+    print("Testing with sample input...")
+    batch_size = 2
+    input_tensor = torch.randn(batch_size, 3, 32, 256)  # [batch, channels, height, width]
+    print(f"Input shape: {input_tensor.shape}")
+    
+    # Forward pass
+    with torch.no_grad():
+        output = model(input_tensor)
+        print(f"Output shape: {output.shape}")
+    
+    print("Debug test completed successfully!")
+
+
+if __name__ == "__main__":
+    main()

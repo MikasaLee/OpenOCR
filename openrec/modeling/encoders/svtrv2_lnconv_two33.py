@@ -1,6 +1,7 @@
 import numpy as np
 import torch
 import torch.nn as nn
+import torch.nn.functional as F
 from torch.nn.init import kaiming_normal_, ones_, trunc_normal_, zeros_
 
 from openrec.modeling.common import DropPath, Identity, Mlp
@@ -391,6 +392,16 @@ class LastStage(nn.Module):
         self.last_conv = nn.Linear(in_channels, out_channels, bias=False)
         self.hardswish = nn.Hardswish()
         self.dropout = nn.Dropout(p=last_drop)
+        self.apply(self._init_weights)
+
+    def _init_weights(self, m: nn.Module):
+        if isinstance(m, nn.Linear):
+            kaiming_normal_(m.weight, mode='fan_out', nonlinearity='relu')
+        if isinstance(m, nn.LayerNorm):
+            zeros_(m.bias)
+            ones_(m.weight)
+        if isinstance(m, nn.Conv2d):
+            kaiming_normal_(m.weight, mode='fan_out', nonlinearity='relu')
 
     def forward(self, x, sz):
         x = x.reshape(-1, sz[0], sz[1], x.shape[-1])
@@ -485,19 +496,21 @@ class SVTRv2LNConvTwo33(nn.Module):
 
         self.out_channels = self.num_features
         self.last_stage = last_stage
+        self.apply(self._init_weights) # LastStage换了一个初始化。
         if last_stage:
             self.out_channels = out_channels
             self.stages.append(
                 LastStage(self.num_features, out_channels, last_drop))
         if feat2d:
             self.stages.append(Feat2D())
-        self.apply(self._init_weights)
+        # self.apply(self._init_weights)
 
     def _init_weights(self, m: nn.Module):
         if isinstance(m, nn.Linear):
             trunc_normal_(m.weight, mean=0, std=0.02)
             if isinstance(m, nn.Linear) and m.bias is not None:
                 zeros_(m.bias)
+            # kaiming_normal_(m.weight, mode='fan_out', nonlinearity='relu')
         if isinstance(m, nn.LayerNorm):
             zeros_(m.bias)
             ones_(m.weight)
@@ -515,3 +528,54 @@ class SVTRv2LNConvTwo33(nn.Module):
         for stage in self.stages:
             x, sz = stage(x, sz)
         return x
+
+
+def main():
+    """
+    Debug main function for SVTRv2LNConvTwo33 model using parameters from config file
+    """
+    # Parameters from config file: /lirunrui/OpenOCR/configs_new_visualC3_textline/rec/svtrv2/svtrv2_ctc.yml
+    model_params = {
+        'max_sz': [32, 256],
+        'use_pos_embed': False,
+        'out_channels': 256,
+        'dims': [128, 256, 384],
+        'depths': [6, 6, 6],
+        'num_heads': [4, 8, 12],
+        'mixer': [['Conv','Conv','Conv','Conv','Conv','Conv'],['Conv','Conv','FGlobal','Global','Global','Global'],['Global','Global','Global','Global','Global','Global']],
+        'sub_k': [[2, 1], [2, 1], [-1, -1]],
+        'last_stage': True,
+        'feat2d': False
+    }
+    
+    # Create model instance
+    model = SVTRv2LNConvTwo33(**model_params)
+    
+    # Print model architecture
+    # print("SVTRv2LNConvTwo33 Model Architecture:")
+    # print(model)
+    # print("\n")
+    
+    # Count parameters
+    total_params = sum(p.numel() for p in model.parameters())
+    trainable_params = sum(p.numel() for p in model.parameters() if p.requires_grad)
+    print(f"Total parameters: {total_params:,}")
+    print(f"Trainable parameters: {trainable_params:,}")
+    print("\n")
+    
+    # Test with sample input
+    print("Testing with sample input...")
+    batch_size = 2
+    input_tensor = torch.randn(batch_size, 3, 32, 256)  # [batch, channels, height, width]
+    print(f"Input shape: {input_tensor.shape}")
+    
+    # Forward pass
+    with torch.no_grad():
+        output = model(input_tensor)
+        print(f"Output shape: {output.shape}")
+    
+    print("Debug test completed successfully!")
+
+
+if __name__ == "__main__":
+    main()

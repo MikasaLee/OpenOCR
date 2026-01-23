@@ -36,7 +36,7 @@ class TAMERLoss(nn.Module):
         tgt_seq = labels[:, 1:2 + max_len].contiguous()        # [B, 1+max_len]
         if pred_seq.size(1) != tgt_seq.size(1):
             pred_seq = pred_seq[:, :tgt_seq.size(1), :]
-        seq_loss = self.seq_ce(pred_seq.view(-1, V), tgt_seq.view(-1))
+        seq_loss = self.seq_ce(pred_seq.reshape(-1, V), tgt_seq.reshape(-1))
         valid_mask = (tgt_seq != self.ignore_index).view(-1)
         seq_loss = seq_loss.masked_select(valid_mask).mean() if valid_mask.any() else seq_loss.mean()
 

@@ -91,14 +91,45 @@ class TextIDSLabelDecode:
         for (ids_str, conf) in ids_dec:
             ids_recovered.append(self.map_ids_to_text(ids_str))
 
-        return {'text': text_dec, 'ids': ids_dec, 'text_from_ids': ids_recovered}
+        return {'text': text_dec, 'ids': ids_dec, 'text_from_ids': ids_recovered, 'label_text': label_text, 'label_ids': label_ids}
 
     def _decode_branch(self, probs, decoder: BaseRecLabelDecode):
         preds_idx = probs.argmax(axis=-1)
         preds_prob = probs.max(axis=-1)
         # Filter out <unk> tokens (index 3) from predictions
         preds_idx = np.where(preds_idx == 3, 0, preds_idx)  # Replace <unk> with <pad>
-        return decoder.decode(preds_idx, preds_prob)
+        
+        # Use custom greedy decode with EOS truncation instead of decoder.decode
+        return self._greedy_decode(preds_idx, preds_prob, decoder)
+
+    def _greedy_decode(self, text_index, text_prob, decoder):
+        """Greedy decode with EOS truncation (eos_id=2)."""
+        result_list = []
+        batch_size = len(text_index)
+        eos_id = 2
+        
+        for b in range(batch_size):
+            chars = []
+            confs = []
+            for idx, t in enumerate(text_index[b]):
+                t = int(t)
+                # Ignore pad(0), sos(1)
+                # Note: unk(3) was already replaced by 0 in _decode_branch
+                if t == 0 or t == 1:
+                    continue
+                # Stop at eos(2)
+                if t == eos_id:
+                    break
+                
+                if t < len(decoder.character):
+                    chars.append(decoder.character[t])
+                    confs.append(text_prob[b][idx])
+            
+            text_str = ''.join(chars)
+            # Calculate average confidence of the valid sequence
+            conf = float(np.mean(confs)) if len(confs) > 0 else 0.0
+            result_list.append((text_str, conf))
+        return result_list
 
     def _decode_label(self, labels, decoder: BaseRecLabelDecode):
         if isinstance(labels, torch.Tensor):
