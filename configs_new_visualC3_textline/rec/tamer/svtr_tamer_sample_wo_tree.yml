@@ -24,7 +24,7 @@ Global:
   use_space_char: &use_space_char True
   save_res_path: ./outputs/output_new_visualC3_textline/tamer_svtr_wo_tree/predicts_tamer.txt
   use_amp: True
-  # find_unused_parameters: True   # 不训练树结构分支，需要打开
+  find_unused_parameters: True   # 不训练树结构分支，需要打开
 
 Optimizer:
   name: AdamW
@@ -73,7 +73,7 @@ Loss:
   name: TextIDSTreeLoss
   ignore_index: 0
   lambda_text: 1.0
-  lambda_struct: 1.0
+  lambda_struct: 0.0
   lambda_ids: 1.0
 
 PostProcess:

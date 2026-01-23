@@ -46,7 +46,7 @@ Architecture:
     growth_rate: 32
     num_layers: 4
   Decoder:
-    name: TAMERDecoder
+    name: TextIDSTreeDecoder
     nhead: 8
     num_decoder_layers: 3
     dim_feedforward: 1024
@@ -54,33 +54,18 @@ Architecture:
     dc: 64
     cross_coverage: False   # 启用交叉注意力覆盖惩罚
     self_coverage: False   # 如需自注意力覆盖可改为 True
-    max_label_length: *max_text_length
-  # Decoder:
-  #   name: TextIDSTreeDecoder
-  #   nhead: 8
-  #   num_decoder_layers: 3
-  #   dim_feedforward: 1024
-  #   dropout: 0.3
-  #   dc: 64
-  #   cross_coverage: False   # 启用交叉注意力覆盖惩罚
-  #   self_coverage: False   # 如需自注意力覆盖可改为 True
-  #   max_text_length: *max_text_length
-  #   max_ids_length: *max_ids_length
-  #   text_vocab_path: *character_dict_path
-  #   ids_vocab_path: *ids_dict_path
-  #   use_space_char: *use_space_char
-
-# Loss:
-#   name: TextIDSTreeLoss # 可以通过权重设置来只训练不同分支
-#   ignore_index: 0
-#   lambda_text: 0.0   
-#   lambda_struct: 1.0
-#   lambda_ids: 1.0
+    max_text_length: *max_text_length
+    max_ids_length: *max_ids_length
+    text_vocab_path: *character_dict_path
+    ids_vocab_path: *ids_dict_path
+    use_space_char: *use_space_char
 
 Loss:
-  name: TAMERLoss
+  name: TextIDSTreeLoss # 可以通过权重设置来只训练不同分支
   ignore_index: 0
+  lambda_text: 0.0   
   lambda_struct: 1.0
+  lambda_ids: 1.0
 
 PostProcess:
   name: TextIDSLabelDecode
@@ -88,7 +73,7 @@ PostProcess:
   ids_character_dict_path: *ids_dict_path
   char_to_ids_path: *char_to_ids_path
   use_space_char: *use_space_char
-
+  
 Metric:
   name: RecTextIDSMetric
   main_indicator: ids_acc  # acc -> ids_acc
