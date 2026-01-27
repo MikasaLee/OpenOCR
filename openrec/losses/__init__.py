@@ -23,6 +23,7 @@ name_to_module = {
     'MDiffLoss': '.mdiff_loss',
     'TAMERLoss': '.tamer_loss',
     'TextIDSTreeLoss': '.text_ids_tree_loss',
+    'TextIDSTreeLossv2': '.text_ids_tree_lossv2',
 }
 
 

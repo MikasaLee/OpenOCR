@@ -491,18 +491,24 @@ def dump_predictions(trainer, datadir, output_log, dataset_name, image_bytes, de
 
                 # IDS legality (on pred_ids)
                 tokens = [tok for tok in str(pred_ids).strip().split() if tok]
+                
+                # Check validity for all tokens (needed for Excel column)
+                token_validity = []
+                for tok in tokens:
+                    ok, _, _ = validate_ids_prefix([ch for ch in tok if not ch.isspace()], idc_arity=idc_arity, require_closed=True)
+                    token_validity.append(ok)
+                
+                is_sample_valid = all(token_validity)
+                
+                # Stats update (only if contains IDC chars)
                 if maybe_ids_tokens(tokens):
-                    seq_ok = True
-                    for tok in tokens:
-                        ok, need, _ = validate_ids_prefix([ch for ch in tok if not ch.isspace()], idc_arity=idc_arity, require_closed=True)
+                    for ok in token_validity:
                         total_token += 1
                         if ok:
                             legal_token += 1
-                        else:
-                            seq_ok = False
                     if tokens:
                         total_seq += 1
-                        if seq_ok:
+                        if is_sample_valid:
                             legal_seq += 1
 
                 # Typo detection inputs
@@ -520,6 +526,7 @@ def dump_predictions(trainer, datadir, output_log, dataset_name, image_bytes, de
                 output_log['pred_text'].append(pred_text_norm)
                 output_log['pred_idsText'].append(pred_idsText_norm)
                 output_log['pred_ids'].append(str(pred_ids))
+                output_log['ids_valid'].append(is_sample_valid)
                 output_log['NED_text_src'].append(float(s_ned))
                 output_log['NED_text_tgt'].append(float(t_ned))
                 output_log['NED_idsText_src'].append(float(s_ned_idsText))
@@ -599,6 +606,7 @@ def main():
         ('pred_text', []),
         ('pred_idsText', []),
         ('pred_ids', []),
+        ('ids_valid', []),
         ('NED_text_src', []),
         ('NED_text_tgt', []),
         ('NED_idsText_src', []),

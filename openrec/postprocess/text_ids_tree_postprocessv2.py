@@ -1,0 +1,323 @@
+import numpy as np
+import torch
+from .ctc_postprocess import BaseRecLabelDecode
+
+class TextIDSLabelDecodev2:
+    def __init__(self, text_character_dict_path, ids_character_dict_path, char_to_ids_path=None, use_space_char=True, **kwargs):
+        self.text_decoder = BaseRecLabelDecode(text_character_dict_path, use_space_char)
+        self.ids_decoder  = BaseRecLabelDecode(ids_character_dict_path, use_space_char)
+
+        self.text_decoder.character = ["<pad>", "<sos>", "<eos>", "<unk>"] + self.text_decoder.character
+        self.ids_decoder.character  = ["<pad>", "<sos>", "<eos>", "<unk>"] + self.ids_decoder.character
+
+        self.text_decoder.get_ignored_tokens = lambda: [0, 1, 2]
+        self.ids_decoder.get_ignored_tokens  = lambda: [0, 1, 2]
+
+        self.use_space_char = use_space_char
+
+        self.ids2char = {}
+        if char_to_ids_path is not None:
+            with open(char_to_ids_path, 'r', encoding='utf-8') as f:
+                for line in f:
+                    line = line.strip()
+                    if not line: continue
+                    parts = line.split('\t')
+                    if len(parts) >= 2:
+                        char, ids_seq = parts[0], parts[1].strip()
+                        self.ids2char[ids_seq] = char
+
+    def map_ids_to_text(self, ids_seq_str):
+        if self.use_space_char:
+            segs = ids_seq_str.split(' ')
+        else:
+            segs = [ids_seq_str]
+        res = []
+        for s in segs:
+            if not s: continue
+            res.append(self.ids2char.get(s, 'X'))
+        return "".join(res)
+
+    def get_character_num(self):
+        return len(self.text_decoder.character)
+
+    def get_vocab_sizes(self):
+        return len(self.text_decoder.character), len(self.ids_decoder.character)
+
+    def __call__(self, preds, batch=None, training=False, *args, **kwargs):
+        if isinstance(preds, dict) and 'res' in preds:
+            preds = preds['res']
+        assert isinstance(preds, (tuple, list)) and len(preds) >= 2
+
+        probs_text = preds[0]
+        probs_ids  = preds[1]
+        ids_lens   = preds[2] if len(preds) >= 3 else None  # 来自 decoder 的 ids_logit_lens
+
+        if isinstance(probs_text, torch.Tensor):
+            probs_text = probs_text.detach().cpu().numpy()
+        if isinstance(probs_ids, torch.Tensor):
+            probs_ids = probs_ids.detach().cpu().numpy()
+        if isinstance(ids_lens, torch.Tensor):
+            ids_lens = ids_lens.detach().cpu().numpy()
+
+        text_dec = self._decode_text_ar(probs_text, self.text_decoder)
+        ids_dec  = self._decode_ids_ctc(probs_ids, self.ids_decoder, ids_lens)
+
+        label_text = []
+        label_ids  = []
+        if batch is not None:
+            # batch: [image, label, length, ids_ctc_label, ids_ctc_length, tree_parents_label]
+            if len(batch) > 1:
+                label_text = self._decode_label_text(batch[1], self.text_decoder)   # drop sos
+            if len(batch) > 4:
+                label_ids = self._decode_label_ids_ctc(batch[3], batch[4], self.ids_decoder)
+
+            return [(text_dec, label_text), (ids_dec, label_ids)]
+
+        # inference/debug dict path
+        idsText_res = []
+        for (ids_str, conf) in ids_dec:
+            idsText_res.append((self.map_ids_to_text(ids_str), conf))
+        return {'text': text_dec, 'ids': ids_dec, 'text_from_ids': idsText_res}
+
+    # -------- text (保持你原来的 eos greedy) --------
+    def _decode_text_ar(self, probs, decoder: BaseRecLabelDecode):
+        preds_idx = probs.argmax(axis=-1)
+        preds_prob = probs.max(axis=-1)
+        # text 分支你想吞 <unk> 可以保留
+        preds_idx = np.where(preds_idx == 3, 0, preds_idx)
+        return self._greedy_decode_with_eos(preds_idx, preds_prob, decoder)
+
+    def _greedy_decode_with_eos(self, text_index, text_prob, decoder):
+        result_list = []
+        eos_id = 2
+        for b in range(len(text_index)):
+            chars, confs = [], []
+            for t, idx in enumerate(text_index[b]):
+                idx = int(idx)
+                if idx in (0, 1):  # pad/sos
+                    continue
+                if idx == eos_id:
+                    break
+                if idx < len(decoder.character):
+                    chars.append(decoder.character[idx])
+                    confs.append(text_prob[b][t])
+            s = ''.join(chars)
+            conf = float(np.mean(confs)) if confs else 0.0
+            result_list.append((s, conf))
+        return result_list
+
+    def _decode_label_text(self, labels, decoder: BaseRecLabelDecode):
+        if isinstance(labels, torch.Tensor):
+            labels = labels.detach().cpu().numpy()
+        labels = labels[:, 1:]  # drop <sos>
+        return decoder.decode(labels)
+
+    # -------- ids (CTC greedy) --------
+    def _decode_ids_ctc(self, probs, decoder: BaseRecLabelDecode, ids_lens=None):
+        # probs: [B,T,V]
+        pred_idx = probs.argmax(axis=-1)
+        pred_prob = probs.max(axis=-1)
+
+        blank = 0
+        # 这些 token 不仅要“输出时忽略”，还要“collapse 时当 blank”
+        collapse_as_blank = set([0, 1, 2])  # pad/blank/sos/eos (你这里 blank=0)
+
+        out = []
+        B, T = pred_idx.shape
+        for b in range(B):
+            L = int(ids_lens[b]) if ids_lens is not None else T
+            L = min(L, T)
+
+            prev = None
+            chars, confs = [], []
+            for t in range(L):
+                k = int(pred_idx[b, t])
+
+                # 关键：把 pad/sos/eos 当 blank 参与 collapse
+                if k in collapse_as_blank:
+                    k = blank
+
+                # collapse consecutive duplicates (including consecutive blanks)
+                if k == prev:
+                    continue
+                prev = k
+
+                # remove blank
+                if k == blank:
+                    continue
+
+                # 保留 <unk>(3) —— 你希望 IDS 不“吞掉 unk”
+                if k < len(decoder.character):
+                    chars.append(decoder.character[k])
+                    confs.append(float(pred_prob[b, t]))
+
+            s = ''.join(chars)
+            conf = float(np.mean(confs)) if confs else 0.0
+            out.append((s, conf))
+        return out
+
+
+    def _decode_label_ids_ctc(self, ids_ctc_label, ids_ctc_length, decoder: BaseRecLabelDecode):
+        if isinstance(ids_ctc_label, torch.Tensor):
+            ids_ctc_label = ids_ctc_label.detach().cpu().numpy()
+        if isinstance(ids_ctc_length, torch.Tensor):
+            ids_ctc_length = ids_ctc_length.detach().cpu().numpy()
+
+        ignore = set([0, 1, 2])
+        res = []
+        for b in range(ids_ctc_label.shape[0]):
+            L = int(ids_ctc_length[b])
+            seq = ids_ctc_label[b, :L].tolist()
+            chars = []
+            for k in seq:
+                k = int(k)
+                if k in ignore:
+                    continue
+                if k < len(decoder.character):
+                    chars.append(decoder.character[k])
+            res.append((''.join(chars), 1.0))
+        return res
+    
+# python -m openrec.postprocess.text_ids_tree_postprocessv2
+if __name__ == "__main__":
+    import torch
+    import os
+    import sys
+    import shutil
+    import numpy as np
+    
+    # Try to locate project root
+    current_dir = os.path.dirname(os.path.abspath(__file__))
+    project_root = os.path.abspath(os.path.join(current_dir, "../.."))
+    if project_root not in sys.path:
+        sys.path.insert(0, project_root)
+    print(f"Project root: {project_root}")
+    
+    # Import encoder for ground truth generation
+    from openrec.preprocess.text_ids_tree_multi_label_encodev2 import TextIDSTreeMultiLabelEncodev2
+
+    print("Initializing TextIDSLabelDecode Check with REAL Configs & PREPROCESS Alignment...")
+    
+    # Real Configs
+    max_text_len = 25
+    max_ids_len = 100
+    text_dict_path = os.path.join(project_root, "tools/utils/dict/visual_c3_ids/char_dict.txt")
+    ids_dict_path = os.path.join(project_root, "tools/utils/dict/visual_c3_ids/minimal_ids_dict.txt")
+    char_to_ids_path = os.path.join(project_root, "tools/utils/dict/visual_c3_ids/char_to_ids.txt")
+    
+    if not os.path.exists(text_dict_path):
+        print(f"Error: Text vocab not found at {text_dict_path}")
+        sys.exit(1)
+
+    try:
+        # 1. Initialize Encoder to get Ground Truth Indices
+        print("Initializing Encoder...")
+        encoder = TextIDSTreeMultiLabelEncodev2(
+            max_text_length=max_text_len,
+            max_ids_length=max_ids_len,
+            character_dict_path=text_dict_path,
+            ids_dict_path=ids_dict_path,
+            char_to_ids_path=char_to_ids_path,
+            use_space_char=True
+        )
+
+        # 2. Initialize Decoder (PostProcess)
+        print("Initializing Decoder...")
+        postprocess = TextIDSLabelDecodev2(
+            text_character_dict_path=text_dict_path,
+            ids_character_dict_path=ids_dict_path,
+            char_to_ids_path=char_to_ids_path,
+            use_space_char=True
+        )
+        
+        text_vocab_size, ids_vocab_size = postprocess.get_vocab_sizes()
+        print(f"Text Vocab Size: {text_vocab_size}")
+        print(f"IDS Vocab Size: {ids_vocab_size}")
+        
+        # 3. Create Test Data using Encoder
+        test_samples = ["我的", "你好世界", "OpenOCR", "123", "测试"]
+        bs = len(test_samples)
+        
+        # Prepare Logits Containers
+        logits_text = torch.zeros(bs, max_text_len + 2, text_vocab_size) 
+        logits_ids = torch.zeros(bs, max_ids_len + 2, ids_vocab_size)
+        
+        # Init with low probability (simulate background)
+        logits_text[:, :, 0] = 10.0 # Pad
+        logits_ids[:, :, 0] = 10.0  # Pad
+        
+        # Prepare Labels Containers
+        label_text_tensor = torch.zeros((bs, max_text_len + 2), dtype=torch.long)
+        label_ids_tensor = torch.zeros((bs, max_ids_len + 2), dtype=torch.long)
+        
+        for i, sample_text in enumerate(test_samples):
+            print(f"\n{'='*20} Processing Sample {i}: '{sample_text}' {'='*20}")
+            data = {"label": sample_text}
+            encoder(data) 
+            
+            curr_text_label = data['label']
+            curr_ids_label = data['ids_label']
+            
+            # Fill Labels Tensor
+            label_text_tensor[i, :len(curr_text_label)] = torch.from_numpy(curr_text_label)
+            label_ids_tensor[i, :len(curr_ids_label)] = torch.from_numpy(curr_ids_label)
+            
+            # Construct Logits
+            tgt_text = curr_text_label[1:] # Drop SOS
+            for t, idx in enumerate(tgt_text):
+                if t < logits_text.shape[1]:
+                    logits_text[i, t, :] = -100.0
+                    logits_text[i, t, idx] = 100.0 
+            
+            tgt_ids = curr_ids_label[1:] # Drop SOS
+            for t, idx in enumerate(tgt_ids):
+                if t < logits_ids.shape[1]:
+                    logits_ids[i, t, :] = -100.0
+                    logits_ids[i, t, idx] = 100.0
+
+        print(f"\n[Model Output] Logits Prepared. Text shape: {logits_text.shape}, IDS shape: {logits_ids.shape}")
+        
+        probs_text = torch.softmax(logits_text, dim=-1)
+        probs_ids = torch.softmax(logits_ids, dim=-1)
+        
+        preds = (probs_text, probs_ids)
+        batch = [None, label_text_tensor, None, label_ids_tensor]
+        
+        print("\n[PostProcess] Running Decode...")
+        res = postprocess(preds, batch)
+        
+        print("Decoded Result Length:", len(res))
+        
+        def get_item(res_list, branch, batch_idx):
+            item = res_list[branch][0][batch_idx]
+            if isinstance(item, tuple): item = item[0]
+            return item
+
+        print("\n[Feature Check] verifying map_ids_to_text for all samples...")
+        for i, original_sample in enumerate(test_samples):
+            pred_text = get_item(res, 0, i)
+            pred_ids = get_item(res, 1, i)
+            
+            recovered = postprocess.map_ids_to_text(pred_ids)
+            
+            print(f"Sample {i}: '{original_sample}'")
+            print(f"  > Pred Text: '{pred_text}'")
+            print(f"  > Pred IDS:  '{pred_ids}'")
+            print(f"  > Recovered: '{recovered}'")
+            
+            if pred_text: # Only check if we successfully predicted text (non-UNK)
+                if recovered == pred_text:
+                    print("  > Result: MATCH")
+                else:
+                    # It's possible some chars are not in reverse map or ambiguity
+                    print(f"  > Result: MISMATCH (Expected '{pred_text}', Got '{recovered}')")
+            else:
+                print("  > Result: Skipped (Empty prediction due to UNK)")
+            print("-" * 30)
+
+        print("TextIDSLabelDecode Check Completed!")
+        
+    except Exception as e:
+        import traceback
+        traceback.print_exc()
+        print(f"Check Failed: {e}")

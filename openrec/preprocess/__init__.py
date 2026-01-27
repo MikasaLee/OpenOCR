@@ -123,6 +123,7 @@ MODULE_MAPPING = {
     'MDiffLabelEncode': '.mdiff_label_encode',
     'IDSTreeLabelEncode': '.ids_tree_label_encode',
     'TextIDSTreeMultiLabelEncode': '.text_ids_tree_multi_label_encode',
+    'TextIDSTreeMultiLabelEncodev2': '.text_ids_tree_multi_label_encodev2',
     'ABINetAug': '.rec_aug',
     'BDA': '.rec_aug',
     'PARSeqAug': '.rec_aug',

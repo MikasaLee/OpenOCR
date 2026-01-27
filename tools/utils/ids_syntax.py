@@ -100,8 +100,16 @@ def load_vocab_from_file(path: str) -> List[str]:
 if __name__ == "__main__":
     # Example usage
     test_seq = "⿰亻⿱𠂇⿲口口口"
-    test_seq = "⿰亻⿱𠂇⿲口口"
-    tokens = list(test_seq)
-    is_valid, need, first_bad = validate_ids_prefix(tokens)
-    print(f"Sequence: {test_seq}")
-    print(f"Is valid: {is_valid}, Final need: {need}, First bad index: {first_bad}")
+    test_seq = "⿱一⿻千耳丨二 ⿱土厶 了 , ⿸𠂇口"
+    tokens = [tok for tok in str(test_seq).strip().split() if tok]
+    seq_ok = True
+    for tok in tokens:
+        is_valid, need, first_bad = validate_ids_prefix([ch for ch in tok if not ch.isspace()], idc_arity=DEFAULT_IDC_ARITY, require_closed=True)
+        if not is_valid:
+            seq_ok = False
+        print(f"tok: {tok}")
+        print(f"Is valid: {is_valid}, Final need: {need}, First bad index: {first_bad}")
+    if seq_ok:
+        print(f"Sequence: {test_seq} is valid.")
+    else:
+        print(f"Sequence: {test_seq} is invalid.")

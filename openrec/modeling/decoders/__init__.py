@@ -31,7 +31,9 @@ class_to_module = {
     'MDiffDecoder': '.mdiff_decoder',
     'TAMERDecoder': '.tamer_decoder',
     'TextIDSTreeDecoder': '.text_ids_tree_decoder', 
+    'TextIDSTreeDecoderv2': '.text_ids_tree_decoderv2',
     'TextIDSTreeShareDecoder': '.text_ids_tree_share_decoder', 
+
 }
 
 
