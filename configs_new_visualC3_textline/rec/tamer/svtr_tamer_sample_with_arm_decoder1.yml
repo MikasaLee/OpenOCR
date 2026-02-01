@@ -3,14 +3,14 @@ Global:
   epoch_num: 100
   log_smooth_window: 20
   print_batch_step: 10
-  output_dir: ./outputs/output_new_visualC3_textline/our_v1/
+  output_dir: ./outputs/output_new_visualC3_textline/tamer_svtr_with_arm_decoder1/  
   save_epoch_step: [1, 25]
   # evaluation is run every 2000 iterations
   eval_batch_step: [0, 2000]
   eval_epoch_step: [0, 1]
   cal_metric_during_train: False
   pretrained_model: 
-  checkpoints: ./outputs/output_new_visualC3_textline/our_v1/latest.pth
+  checkpoints:
   use_tensorboard: false
   infer_img:
   distributed: true  # 启用分布式训练
@@ -21,7 +21,7 @@ Global:
   max_text_length: &max_text_length 15   # 文本序列最大长度
   max_ids_length: &max_ids_length 100     # IDS 序列最大长度（通常更长）
   use_space_char: &use_space_char True
-  save_res_path: ./outputs/output_new_visualC3_textline/our_v1/predicts.txt
+  save_res_path: ./outputs/output_new_visualC3_textline/tamer_svtr_with_arm_decoder1/predicts_tamer.txt
   use_amp: True
 
 Optimizer:
@@ -53,39 +53,29 @@ Architecture:
     last_stage: False
     prenorm: True
   Decoder:
-    name: TextIDSTreeDecoderv2
+    name: TextIDSTreeDecoder
     nhead: 8
-    num_decoder_layers: 3
+    num_decoder_layers: 1   # 3 -> 1
     dim_feedforward: 1024
     dropout: 0.3
     dc: 64
-    cross_coverage: False   # 启用交叉注意力覆盖惩罚
-    self_coverage: False   # 如需自注意力覆盖可改为 True
+    cross_coverage: True   # 启用交叉注意力覆盖惩罚
+    self_coverage: True   # 如需自注意力覆盖可改为 True
     max_text_length: *max_text_length
     max_ids_length: *max_ids_length
     text_vocab_path: *character_dict_path
     ids_vocab_path: *ids_dict_path
-    char_to_ids_path: *char_to_ids_path
     use_space_char: *use_space_char
 
-    ids_use_beam_search: False
-    ids_beam_size: 24
-    ids_beam_token_topk: 40
-    ids_beam_prune_logp: 10.0
-    ids_length_penalty_alpha: 0.0
-    # tree rerank：建议小权重，避免把“非法输出”压没
-    ids_struct_rerank_weight: 0.10
-    ids_struct_rerank_topk: 10
-    
 Loss:
-  name: TextIDSTreeLossv2
+  name: TextIDSTreeLoss
   ignore_index: 0
   lambda_text: 1.0
   lambda_struct: 1.0
   lambda_ids: 1.0
 
 PostProcess:
-  name: TextIDSLabelDecodev2
+  name: TextIDSLabelDecode
   text_character_dict_path: *character_dict_path
   ids_character_dict_path: *ids_dict_path
   char_to_ids_path: *char_to_ids_path
@@ -106,7 +96,7 @@ Train:
       - DecodeImagePIL: # load image
           img_mode: RGB
       - PARSeqAugPIL:
-      - TextIDSTreeMultiLabelEncodev2:
+      - TextIDSTreeMultiLabelEncode:
           character_dict_path: *character_dict_path
           ids_dict_path: *ids_dict_path
           use_space_char: *use_space_char
@@ -117,12 +107,12 @@ Train:
           image_shape: [32, 256]
           padding: False
       - KeepKeys:
-          keep_keys: ['image', 'label', 'length', 'ids_ctc_label', 'ids_ctc_length', 'tree_parents_ctc_label'] 
+          keep_keys: ['image', 'label', 'length', 'ids_label', 'ids_length', 'tree_parents_label'] 
   loader:
     shuffle: True
     batch_size_per_card: &batch_size_per_card 256
     drop_last: True
-    num_workers: 8  # 临时设为0以排除DataLoader多进程问题
+    num_workers: 4  # 临时设为0以排除DataLoader多进程问题
 
 Eval:
   dataset:
@@ -131,7 +121,10 @@ Eval:
     transforms:
       - DecodeImagePIL: # load image
           img_mode: RGB
-      - TextIDSTreeMultiLabelEncodev2:
+      - SaveRawImageBytes:  # eval 时打开可保存原始图像
+          dst_key: image_raw
+          src_key: image
+      - TextIDSTreeMultiLabelEncode:
           character_dict_path: *character_dict_path
           ids_dict_path: *ids_dict_path
           use_space_char: *use_space_char
@@ -142,9 +135,11 @@ Eval:
           image_shape: [32, 256]
           padding: False
       - KeepKeys:
-          keep_keys: ['image', 'label', 'length', 'ids_ctc_label', 'ids_ctc_length', 'tree_parents_ctc_label']
+          # keep_keys: ['image', 'label', 'length', 'ids_label', 'ids_length', 'tree_parents_label'] 
+          keep_keys: ['image', 'label', 'length', 'ids_label', 'ids_length', 'tree_parents_label', 'image_raw'] # eval 时打开可保存原始图像
   loader:
     shuffle: False
     drop_last: False
     batch_size_per_card: *batch_size_per_card
-    num_workers: 8  # 临时设为0以排除DataLoader多进程问题
+    num_workers: 4  # 临时设为0以排除DataLoader多进程问题
+    collate_fn: RecWithRawCollator # eval 时打开可保存原始图像

@@ -32,8 +32,9 @@ class_to_module = {
     'TAMERDecoder': '.tamer_decoder',
     'TextIDSTreeDecoder': '.text_ids_tree_decoder', 
     'TextIDSTreeDecoderv2': '.text_ids_tree_decoderv2',
+    'TextIDSTreeDecoderv3': '.text_ids_tree_decoderv3',
     'TextIDSTreeShareDecoder': '.text_ids_tree_share_decoder', 
-
+    'NRTRDecoderTest': '.nrtr_decoder_test',
 }
 
 

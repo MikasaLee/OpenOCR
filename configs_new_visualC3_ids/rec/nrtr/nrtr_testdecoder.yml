@@ -3,7 +3,7 @@ Global:
   epoch_num: 100
   log_smooth_window: 20
   print_batch_step: 10
-  output_dir: ./outputs/output_new_visualC3_ids/nrtr/
+  output_dir: ./outputs/output_new_visualC3_ids/nrtr_decoder6/
   save_epoch_step: [1, 25]
   # evaluation is run every 2000 iterations
   eval_batch_step: [0, 2000]
@@ -18,7 +18,7 @@ Global:
   # ./tools/utils/ppocr_keys_v1.txt  # ch
   max_text_length: &max_text_length 100
   use_space_char: &use_space_char True
-  save_res_path: ./outputs/output_new_visualC3_ids/nrtr/predicts_nrtr.txt
+  save_res_path: ./outputs/output_new_visualC3_ids/nrtr_decoder6/predicts_nrtr.txt
   use_amp: True
 
 Optimizer:
@@ -40,7 +40,7 @@ Architecture:
   Encoder:
     name: NRTREncoder
   Decoder:
-    name: NRTRDecoder
+    name: NRTRDecoderTest
     num_encoder_layers: 6
     beam_size: 0
     num_decoder_layers: 6

@@ -263,6 +263,7 @@ def prepare_cfg(cfg):
     cfg.cfg['PostProcess']['with_ratio'] = True
     cfg.cfg['Metric']['with_ratio'] = True
     cfg.cfg['Metric']['max_len'] = 30
+    cfg.cfg['Metric']['max_len_ids'] = 200
     cfg.cfg['Global']['max_text_length'] = 30
     cfg.cfg['Global']['max_ids_length'] = 200
     cfg.cfg['Metric']['max_ratio'] = 12
@@ -594,6 +595,7 @@ def main():
 
     # default two sets
     data_dirs_list = [[
+        # r'/ipfs/lirunrui/lmdb_dataset/visual_c3_new_textline/train_lmdb',
         r'/ipfs/lirunrui/lmdb_dataset/visual_c3_new_textline/test_lmdb/test_correct',
         r'/ipfs/lirunrui/lmdb_dataset/visual_c3_new_textline/test_lmdb/test_fakedv2',
     ]]
