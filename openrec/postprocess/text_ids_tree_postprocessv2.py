@@ -114,47 +114,44 @@ class TextIDSLabelDecodev2:
 
     # -------- ids (CTC greedy) --------
     def _decode_ids_ctc(self, probs, decoder: BaseRecLabelDecode, ids_lens=None):
-        # probs: [B,T,V]
-        pred_idx = probs.argmax(axis=-1)
-        pred_prob = probs.max(axis=-1)
+        """
+        CRNN-style CTC greedy:
+        1) argmax / maxprob
+        2) （可选）按 ids_lens 截断
+        3) 先删除 <sos>/<eos> 这类“结构token”，避免它们打断 duplicate collapse
+        4) 调 decoder.decode(..., is_remove_duplicate=True)
+        """
+        # probs: [B, T, V]
+        pred_idx = probs.argmax(axis=-1)   # [B, T]
+        pred_prob = probs.max(axis=-1)     # [B, T]
 
-        blank = 0
-        # 这些 token 不仅要“输出时忽略”，还要“collapse 时当 blank”
-        collapse_as_blank = set([0, 1, 2])  # pad/blank/sos/eos (你这里 blank=0)
-
-        out = []
         B, T = pred_idx.shape
+
+        # 你的 vocab 被手动前缀了: 0=<pad>, 1=<sos>, 2=<eos>, 3=<unk>
+        # pad(0) 在 CTC 里通常当 blank 用，不能预先删；但 sos/eos 建议预删
+        pre_remove = {1, 2}
+
+        idx_list, prob_list = [], []
         for b in range(B):
             L = int(ids_lens[b]) if ids_lens is not None else T
             L = min(L, T)
 
-            prev = None
-            chars, confs = [], []
-            for t in range(L):
-                k = int(pred_idx[b, t])
+            idx = pred_idx[b, :L]
+            prob = pred_prob[b, :L]
 
-                # 关键：把 pad/sos/eos 当 blank 参与 collapse
-                if k in collapse_as_blank:
-                    k = blank
+            # 关键：先删掉 sos/eos，避免它们把重复 token 隔开，导致“去重失败”
+            if pre_remove:
+                mask = ~np.isin(idx, list(pre_remove))
+                idx = idx[mask]
+                prob = prob[mask]
 
-                # collapse consecutive duplicates (including consecutive blanks)
-                if k == prev:
-                    continue
-                prev = k
+            idx_list.append(idx)
+            prob_list.append(prob)
 
-                # remove blank
-                if k == blank:
-                    continue
+        # 直接走 CRNN / PaddleOCR 同款 decode 逻辑：先 remove-duplicate，再 ignore blank
+        # 这里 decoder.get_ignored_tokens 你已设为 [0,1,2]，但 1/2 已经被删了，保留也无害
+        return decoder.decode(idx_list, prob_list, is_remove_duplicate=True)
 
-                # 保留 <unk>(3) —— 你希望 IDS 不“吞掉 unk”
-                if k < len(decoder.character):
-                    chars.append(decoder.character[k])
-                    confs.append(float(pred_prob[b, t]))
-
-            s = ''.join(chars)
-            conf = float(np.mean(confs)) if confs else 0.0
-            out.append((s, conf))
-        return out
 
 
     def _decode_label_ids_ctc(self, ids_ctc_label, ids_ctc_length, decoder: BaseRecLabelDecode):

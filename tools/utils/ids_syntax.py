@@ -100,7 +100,7 @@ def load_vocab_from_file(path: str) -> List[str]:
 if __name__ == "__main__":
     # Example usage
     test_seq = "⿰亻⿱𠂇⿲口口口"
-    test_seq = "⿱一⿻千耳丨二 ⿱土厶 了 , ⿸𠂇口"
+    test_seq = "⿰口⿵⿰丿戈一口"
     tokens = [tok for tok in str(test_seq).strip().split() if tok]
     seq_ok = True
     for tok in tokens:

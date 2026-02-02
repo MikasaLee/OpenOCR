@@ -1,0 +1,152 @@
+Global:
+  device: gpu
+  epoch_num: 500
+  log_smooth_window: 20
+  print_batch_step: 10
+  output_dir: ./outputs/output_new_visualC3_textline/our_v3_epoch500/
+  save_epoch_step: [1, 25]
+  # evaluation is run every 2000 iterations
+  eval_batch_step: [0, 2000000]
+  eval_epoch_step: [50, 1]
+  cal_metric_during_train: False
+  pretrained_model: 
+  checkpoints:
+  use_tensorboard: false
+  infer_img:
+  distributed: true  # 启用分布式训练
+  # for data or label process
+  character_dict_path: &character_dict_path ./tools/utils/dict/visual_c3_ids/char_dict.txt # ch
+  ids_dict_path: &ids_dict_path ./tools/utils/dict/visual_c3_ids/minimal_ids_dict.txt
+  char_to_ids_path: &char_to_ids_path ./tools/utils/dict/visual_c3_ids/char_to_ids.txt
+  max_text_length: &max_text_length 15   # 文本序列最大长度
+  max_ids_length: &max_ids_length 100     # IDS 序列最大长度（通常更长）
+  use_space_char: &use_space_char True
+  save_res_path: ./outputs/output_new_visualC3_textline/our_v3_epoch500/predicts.txt
+  use_amp: True
+
+Optimizer:
+  name: AdamW
+  lr: 6.5e-4 # for 4gpus bs256/gpu
+  weight_decay: 0.05
+  filter_bias_and_bn: False
+
+LRScheduler:
+  name: OneCycleLR
+  warmup_epoch: 5
+  cycle_momentum: False
+
+Architecture:
+  model_type: rec
+  algorithm: TAMER  # 使用 TAMER 算法，匹配 TAMER_Encoder 和 TextIDSTreeDecoder
+  Transform:
+  Encoder:
+    name: SVTRNet
+    img_size: [32, 256]
+    out_char_num: 32
+    out_channels: 256
+    patch_merging: 'Conv'
+    embed_dim: [128, 256, 384]
+    depth: [6, 6, 6]
+    num_heads: [4, 8, 12]
+    mixer: ['Conv','Conv','Conv','Conv','Conv','Conv', 'Conv','Conv', 'Global','Global','Global','Global','Global','Global','Global','Global','Global','Global']
+    local_mixer: [[5, 5], [5, 5], [5, 5]]
+    last_stage: False
+    prenorm: True
+  Decoder:
+    name: TextIDSTreeDecoderv3
+    nhead: 8
+    num_decoder_layers: 3
+    dim_feedforward: 1024
+    dropout: 0.3
+    dc: 64
+    cross_coverage: False   # 启用交叉注意力覆盖惩罚
+    self_coverage: False   # 如需自注意力覆盖可改为 True
+    max_text_length: *max_text_length
+    max_ids_length: *max_ids_length
+    text_vocab_path: *character_dict_path
+    ids_vocab_path: *ids_dict_path
+    char_to_ids_path: *char_to_ids_path
+    use_space_char: *use_space_char
+
+    ids_decode_mode: greedy  # greedy or constrained
+    ids_use_beam_search: False
+    ids_beam_size: 24
+    ids_beam_token_topk: 40
+    ids_beam_prune_logp: 10.0
+    ids_length_penalty_alpha: 0.0
+    # tree rerank：建议小权重，避免把“非法输出”压没
+    ids_struct_rerank_weight: 0.10
+    ids_struct_rerank_topk: 10
+    
+    
+Loss:
+  name: TextIDSTreeLossv2
+  ignore_index: 0
+  lambda_text: 1.0
+  lambda_struct: 1.0
+  lambda_ids: 1.0
+
+PostProcess:
+  name: TextIDSLabelDecodev2
+  text_character_dict_path: *character_dict_path
+  ids_character_dict_path: *ids_dict_path
+  char_to_ids_path: *char_to_ids_path
+  use_space_char: *use_space_char
+
+Metric:
+  name: RecTextIDSMetric
+  main_indicator: acc
+  max_len: *max_text_length     # 文本分支最大长度
+  max_len_ids: *max_ids_length  # IDS分支最大长度
+  # is_filter: True
+
+Train:
+  dataset:
+    name: LMDBDataSet
+    data_dir: /ipfs/lirunrui/lmdb_dataset/visual_c3_new_textline/train_lmdb
+    transforms:
+      - DecodeImagePIL: # load image
+          img_mode: RGB
+      - PARSeqAugPIL:
+      - TextIDSTreeMultiLabelEncodev2:
+          character_dict_path: *character_dict_path
+          ids_dict_path: *ids_dict_path
+          use_space_char: *use_space_char
+          max_text_length: *max_text_length   # 文本序列截断
+          max_ids_length: *max_ids_length     # IDS 序列截断（供 label_ids_seq 使用）
+          char_to_ids_path: *char_to_ids_path
+      - RecTVResize:
+          image_shape: [32, 256]
+          padding: False
+      - KeepKeys:
+          keep_keys: ['image', 'label', 'length', 'ids_ctc_label', 'ids_ctc_length', 'tree_parents_ctc_label'] 
+  loader:
+    shuffle: True
+    batch_size_per_card: &batch_size_per_card 256
+    drop_last: True
+    num_workers: 8  # 临时设为0以排除DataLoader多进程问题
+
+Eval:
+  dataset:
+    name: LMDBDataSet
+    data_dir: /ipfs/lirunrui/lmdb_dataset/visual_c3_new_textline/test_lmdb/test_correct
+    transforms:
+      - DecodeImagePIL: # load image
+          img_mode: RGB
+      - TextIDSTreeMultiLabelEncodev2:
+          character_dict_path: *character_dict_path
+          ids_dict_path: *ids_dict_path
+          use_space_char: *use_space_char
+          max_text_length: *max_text_length   # 文本序列截断
+          max_ids_length: *max_ids_length     # IDS 序列截断（供 label_ids_seq 使用）
+          char_to_ids_path: *char_to_ids_path
+      - RecTVResize:
+          image_shape: [32, 256]
+          padding: False
+      - KeepKeys:
+          keep_keys: ['image', 'label', 'length', 'ids_ctc_label', 'ids_ctc_length', 'tree_parents_ctc_label']
+  loader:
+    shuffle: False
+    drop_last: False
+    batch_size_per_card: *batch_size_per_card
+    num_workers: 8  # 临时设为0以排除DataLoader多进程问题

@@ -6,9 +6,9 @@ Global:
   output_dir: ./outputs/output_new_visualC3_ids/nrtr_decoder20/
   save_epoch_step: [1, 25]
   # evaluation is run every 2000 iterations
-  eval_batch_step: [0, 2000]
-  eval_epoch_step: [0, 1]
-  cal_metric_during_train: True
+  eval_batch_step: [0, 2000000]
+  eval_epoch_step: [50, 1]
+  cal_metric_during_train: False
   pretrained_model:
   checkpoints:
   use_tensorboard: false
@@ -23,7 +23,7 @@ Global:
 
 Optimizer:
   name: AdamW
-  lr: 6.5e-4 # for 4gpus bs256/gpu
+  lr: 3.25e-4 # for 4gpus bs256/gpu
   weight_decay: 0.05
   filter_bias_and_bn: True
 
