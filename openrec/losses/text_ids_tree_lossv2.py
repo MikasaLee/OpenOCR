@@ -47,6 +47,14 @@ class TextIDSTreeLossv2(nn.Module):
         input_lengths = torch.full((B,), T, dtype=torch.long, device=device)
         target_lengths = ids_ctc_lengths.to(device=device, dtype=torch.long)
 
+        # ========== DEBUG: 检查 CTC 长度不匹配问题 ==========
+        overflow_mask = target_lengths > T
+        num_overflow = overflow_mask.sum().item()
+        if num_overflow > 0:
+            max_target = target_lengths.max().item()
+            print(f"[CTC WARNING] {num_overflow}/{B} samples have ids_ctc_length > T ({T}), max_target={max_target}")
+        # ========== END DEBUG ==========
+
         # targets can be [B, S] padded, CTCLoss will read only first target_lengths[b]
         targets = ids_ctc_labels.to(device=device, dtype=torch.long)
 

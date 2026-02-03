@@ -183,8 +183,8 @@ def main():
 
     # Optional custom override example (keep commented):
     data_dirs_list = [[
-        # r'/a800data1/lirunrui/origin_datasets/bnu_en_benchmark_lmdb/common_0'
-        r'/ipfs/lirunrui/lmdb_dataset/zuowen_120/images_lines_split_en_lmdb',
+        # r'/a800data1/lirunrui/origin_datasets/bnu_zh_benchmark_lmdb/common_0'
+        r'/ipfs/lirunrui/lmdb_dataset/zuowen_120/images_lines_split_ch_lmdb',
     ]]
 
     output_log = OrderedDict([

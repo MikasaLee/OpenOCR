@@ -597,7 +597,7 @@ def main():
     data_dirs_list = [[
         # r'/ipfs/lirunrui/lmdb_dataset/visual_c3_new_textline/train_lmdb',
         r'/ipfs/lirunrui/lmdb_dataset/visual_c3_new_textline/test_lmdb/test_correct',
-        # r'/ipfs/lirunrui/lmdb_dataset/visual_c3_new_textline/test_lmdb/test_fakedv2',
+        r'/ipfs/lirunrui/lmdb_dataset/visual_c3_new_textline/test_lmdb/test_fakedv2',
     ]]
 
     output_log = OrderedDict([

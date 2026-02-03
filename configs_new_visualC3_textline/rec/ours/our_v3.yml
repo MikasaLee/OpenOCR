@@ -68,7 +68,7 @@ Architecture:
     char_to_ids_path: *char_to_ids_path
     use_space_char: *use_space_char
 
-    ids_decode_mode: constrained  # greedy or constrained
+    ids_decode_mode: greedy  # greedy or constrained
     ids_use_beam_search: False
     ids_beam_size: 24
     ids_beam_token_topk: 40
