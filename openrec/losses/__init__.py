@@ -24,6 +24,8 @@ name_to_module = {
     'TAMERLoss': '.tamer_loss',
     'TextIDSTreeLoss': '.text_ids_tree_loss',
     'TextIDSTreeLossv2': '.text_ids_tree_lossv2',
+    'CharWiseVerifyLoss': '.charwise_verify_loss',
+    'RTDLoss': '.rtd_loss',
 }
 
 

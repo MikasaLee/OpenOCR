@@ -21,7 +21,9 @@ module_mapping = {
     'UniRecLabelDecode': '.unirec_postprocess',
     'TextIDSLabelDecode': '.text_ids_tree_postprocess',
     'TextIDSLabelDecodev2': '.text_ids_tree_postprocessv2',
+    'CharWiseVerifyPostProcess': '.charwise_verify_postprocess',
     'TAMERLabelDecode': '.tamer_postprocess',
+    'RTDLabelDecode': '.rtd_postprocess',
     'GTCLabelDecode': '.'  # 当前模块中的类
 }
 

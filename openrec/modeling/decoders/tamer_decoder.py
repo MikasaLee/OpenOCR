@@ -217,9 +217,10 @@ class TransformerDecoder(nn.Module):
         self.arm = arm
         self.norm = nn.LayerNorm(d_model)
 
-    def forward(self, tgt, memory, height: int, tgt_mask=None, memory_mask=None, tgt_key_padding_mask=None, memory_key_padding_mask=None):
+    def forward(self, tgt, memory, height: int, tgt_mask=None, memory_mask=None, tgt_key_padding_mask=None, memory_key_padding_mask=None, return_attn=False):
         out = tgt
         prev_attn = None
+        last_cross_attn = None
         for i, layer in enumerate(self.layers):
             out, attn = layer(
                 out,
@@ -232,8 +233,11 @@ class TransformerDecoder(nn.Module):
                 tgt_key_padding_mask=tgt_key_padding_mask,
                 memory_key_padding_mask=memory_key_padding_mask,
             )
+            last_cross_attn = attn
             if self.arm is not None:
                 prev_attn = attn  # refined attention passed to next layer
+        if return_attn:
+            return self.norm(out), last_cross_attn
         return self.norm(out)
 
 

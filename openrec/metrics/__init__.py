@@ -7,8 +7,10 @@ from .rec_metric_gtc import RecGTCMetric
 from .rec_metric_long import RecMetricLong
 from .rec_metric_mgp import RecMPGMetric
 from .rec_metric_text_ids import RecTextIDSMetric
+from .rec_metric_char_verify import RecCharVerifyMetric
+from .rec_metric_rtd import RecRTDMetric
 
-support_dict = ['RecMetric', 'RecMetricLong', 'RecGTCMetric', 'RecMPGMetric', 'RecTextIDSMetric']
+support_dict = ['RecMetric', 'RecMetricLong', 'RecGTCMetric', 'RecMPGMetric', 'RecTextIDSMetric', 'RecCharVerifyMetric', 'RecRTDMetric']
 
 
 def build_metric(config):

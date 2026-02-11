@@ -34,7 +34,9 @@ class_to_module = {
     'TextIDSTreeDecoderv2': '.text_ids_tree_decoderv2',
     'TextIDSTreeDecoderv3': '.text_ids_tree_decoderv3',
     'TextIDSTreeShareDecoder': '.text_ids_tree_share_decoder', 
+    'CharWiseVerifyDecoder': '.charwise_verify_decoder',
     'NRTRDecoderTest': '.nrtr_decoder_test',
+    'NRTRRTDDecoder': '.nrtr_rtd_decoder',
 }
 
 

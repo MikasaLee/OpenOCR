@@ -262,10 +262,12 @@ def prepare_cfg(cfg):
     cfg.cfg['Global']['use_amp'] = False
     cfg.cfg['PostProcess']['with_ratio'] = True
     cfg.cfg['Metric']['with_ratio'] = True
-    cfg.cfg['Metric']['max_len'] = 15
-    cfg.cfg['Metric']['max_len_ids'] = 100
-    cfg.cfg['Global']['max_text_length'] = 15
-    cfg.cfg['Global']['max_ids_length'] = 100
+    cfg.cfg['Metric']['max_len'] = 30
+    cfg.cfg['Metric']['max_len_ids'] = 200
+    cfg.cfg['Metric']['max_single_char_ids_len'] = 50
+    cfg.cfg['Global']['max_text_length'] = 30
+    cfg.cfg['Global']['max_ids_length'] = 200
+    cfg.cfg['Global']['max_single_char_ids_len'] = 50
     cfg.cfg['Metric']['max_ratio'] = 12
     
     # ---------------------------------------------------------
