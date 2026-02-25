@@ -25,6 +25,7 @@ name_to_module = {
     'AutoSTREncoder': '.autostr_encoder',
     'NRTREncoder': '.nrtr_encoder',
     'RepSVTREncoder': '.repvit',
+    'SALGEncoder': '.eduocr_salg_encoder',
     'TAMER_Encoder': '.tamer_encoder',
     'TAMER_DualEncoder': '.tamer_dual_encoder',
 }

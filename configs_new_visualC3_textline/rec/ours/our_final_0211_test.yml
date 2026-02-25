@@ -3,7 +3,7 @@ Global:
   epoch_num: 100
   log_smooth_window: 20
   print_batch_step: 10
-  output_dir: ./outputs/output_new_visualC3_textline/our_final_0211/
+  output_dir: ./outputs/output_new_visualC3_textline/our_final_0211_test/
   save_epoch_step: [1, 25]
   eval_batch_step: [0, 20000000]
   eval_epoch_step: [0, 1]
@@ -20,7 +20,7 @@ Global:
   max_text_length: &max_text_length 15
   max_single_char_ids_len: &max_single_char_ids_len 25
   use_space_char: &use_space_char True
-  save_res_path: ./outputs/output_new_visualC3_textline/our_final_0211/predicts.txt
+  save_res_path: ./outputs/output_new_visualC3_textline/our_final_0211_test/predicts.txt
   use_amp: True
 
 Optimizer:
@@ -58,8 +58,8 @@ Architecture:
     dim_feedforward: 1024
     dropout: 0.3
     dc: 64
-    cross_coverage: False
-    self_coverage: False
+    cross_coverage: True
+    self_coverage: True
     max_text_length: *max_text_length
     max_single_char_ids_len: *max_single_char_ids_len
     text_vocab_path: *character_dict_path
@@ -69,7 +69,7 @@ Architecture:
     # IDS grammar constraints
     constrained_ctc_decode: True  # 测试时是否使用IDS语法约束CTC解码，但训练时请关闭要不然会变慢
     ids_syntax_max_need: 64
-    grammar_penalty_weight: 0.1
+    grammar_penalty_weight: 1
     # Independent char locator
     num_char_locator_layers: 2
     # Per-char CTC head
@@ -81,7 +81,7 @@ Loss:
   ignore_index: 0
   lambda_text: 1.0
   lambda_ids: 1.0
-  lambda_illegal: 0.1
+  lambda_illegal: 1.0
 
 PostProcess:
   name: CharWiseVerifyPostProcess

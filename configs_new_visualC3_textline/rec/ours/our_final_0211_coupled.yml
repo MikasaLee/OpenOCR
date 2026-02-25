@@ -3,9 +3,9 @@ Global:
   epoch_num: 100
   log_smooth_window: 20
   print_batch_step: 10
-  output_dir: ./outputs/output_new_visualC3_textline/our_final_0211/
+  output_dir: ./outputs/output_new_visualC3_textline/our_final_0211_coupled/
   save_epoch_step: [1, 25]
-  eval_batch_step: [0, 20000000]
+  eval_batch_step: [0, 2000]
   eval_epoch_step: [0, 1]
   cal_metric_during_train: False
   pretrained_model:
@@ -20,7 +20,7 @@ Global:
   max_text_length: &max_text_length 15
   max_single_char_ids_len: &max_single_char_ids_len 25
   use_space_char: &use_space_char True
-  save_res_path: ./outputs/output_new_visualC3_textline/our_final_0211/predicts.txt
+  save_res_path: ./outputs/output_new_visualC3_textline/our_final_0211_coupled/predicts.txt
   use_amp: True
 
 Optimizer:
@@ -52,7 +52,7 @@ Architecture:
     last_stage: True
     feat2d: False
   Decoder:
-    name: CharWiseVerifyDecoder
+    name: CharWiseVerifyDecoderCoupled
     nhead: 8
     num_decoder_layers: 3
     dim_feedforward: 1024
@@ -67,10 +67,14 @@ Architecture:
     char_to_ids_path: *char_to_ids_path
     use_space_char: *use_space_char
     # IDS grammar constraints
-    constrained_ctc_decode: True  # 测试时是否使用IDS语法约束CTC解码，但训练时请关闭要不然会变慢
+    constrained_ctc_decode: False
     ids_syntax_max_need: 64
-    grammar_penalty_weight: 0.1
-    # Independent char locator
+    grammar_penalty_weight: 0.02
+    # Coupling mode: use text_hidden as per-char features
+    coupling_mode: hybrid
+    coupling_alpha: 0.2
+    detach_text_for_ids: False
+    # Independent char locator (ignored when coupling_mode=text_hidden)
     num_char_locator_layers: 2
     # Per-char CTC head
     ctc_frames_per_char: 32
@@ -81,7 +85,7 @@ Loss:
   ignore_index: 0
   lambda_text: 1.0
   lambda_ids: 1.0
-  lambda_illegal: 0.1
+  lambda_illegal: 1.0
 
 PostProcess:
   name: CharWiseVerifyPostProcess

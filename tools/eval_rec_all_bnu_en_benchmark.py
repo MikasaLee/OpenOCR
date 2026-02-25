@@ -17,22 +17,23 @@ from tools.engine.config import Config
 from tools.engine.trainer import Trainer  
 from tools.utility import ArgsParser  
 
+S_WEIGHT = np.array([0.259, 0.159, 0.227, 0.029, 0.021, 0.133, 0.085, 0.017, 0.0, 0.03, 0.007, 0.033], dtype=np.float32)
+
 def replace_punctuation(text: str) -> str:
-    """将常见中文标点替换为英文标点，保持与参考脚本一致。"""
+    """Normalize common Chinese punctuation to English punctuation."""
     if text is None:
         return ''
-    # 中文到英文的简单映射
     mapping = {
-        r'，': r',', 
-        r'。': r'.',
-        r'！': r'!', 
-        r'？': r'?', 
-        r'；': r';', 
-        r'：': r':',
-        r'“': r'"', 
-        r'”': r'"', 
-        r'‘': r"'", 
-        r'’': r"'",
+        '，': ',',
+        '。': '.',
+        '！': '!',
+        '？': '?',
+        '；': ';',
+        '：': ':',
+        '“': '"',
+        '”': '"',
+        '‘': "'",
+        '’': "'",
     }
     for k, v in mapping.items():
         text = text.replace(k, v)
@@ -40,7 +41,7 @@ def replace_punctuation(text: str) -> str:
 
 
 def to_png_bytes(img_array):
-    """将 numpy 图像数组转成 PNG bytes，兼容单通道/三通道及 0~1/0~255 输入。"""
+    """Convert numpy image array to PNG bytes."""
     if img_array is None:
         return None
 
@@ -66,6 +67,13 @@ def to_png_bytes(img_array):
 def parse_args():
     parser = ArgsParser()
     parser.add_argument(
+        '--infer_branch',
+        type=str,
+        default='ssm',
+        choices=['ssm', 'pph'],
+        help='Inference branch for GTCDecoder.',
+    )
+    parser.add_argument(
         '--save_pred_xlsx',
         type=str,
         default=None,
@@ -75,7 +83,7 @@ def parse_args():
     return args
 
 
-def prepare_cfg(cfg):
+def prepare_cfg(cfg, infer_branch='ssm'):
     # Align with eval_rec_all_ch tweaks
     if cfg.cfg['Global']['output_dir'][-1] == '/':
         cfg.cfg['Global']['output_dir'] = cfg.cfg['Global']['output_dir'][:-1]
@@ -89,11 +97,16 @@ def prepare_cfg(cfg):
     keep_keys = cfg.cfg['Eval']['dataset']['transforms'][-1]['KeepKeys']['keep_keys']
     if 'real_ratio' not in keep_keys:
         keep_keys.append('real_ratio')
-    # 不引入非张量键，避免 to(device) 失败；img_name 以索引生成
+
+    if infer_branch == 'pph':
+        if cfg.cfg.get('Architecture', {}).get('Decoder', {}).get('name') == 'GTCDecoder':
+            cfg.cfg['Architecture']['Decoder']['infer_gtc'] = True
+        if cfg.cfg.get('PostProcess', {}).get('name') == 'GTCLabelDecode':
+            cfg.cfg['PostProcess']['only_gtc'] = False
     return cfg
 
 
-def dump_predictions(trainer, datadir, output_log, dataset_name, image_bytes):
+def dump_predictions(trainer, datadir, output_log, dataset_name, image_bytes, infer_branch='ssm'):
     config_each = trainer.cfg.copy()
     if 'RatioDataSet' in config_each['Eval']['dataset']['name']:
         config_each['Eval']['dataset']['data_dir_list'] = [datadir]
@@ -105,6 +118,7 @@ def dump_predictions(trainer, datadir, output_log, dataset_name, image_bytes):
     model = trainer.model
     device = trainer.device
     post_process = trainer.post_process_class
+    use_gtc_decode = trainer.cfg.get('PostProcess', {}).get('name') == 'GTCLabelDecode'
     model.eval()
     num = 0
     true_num = 0
@@ -113,22 +127,28 @@ def dump_predictions(trainer, datadir, output_log, dataset_name, image_bytes):
         pbar = tqdm(total=len(valid_dataloader), desc=f'eval {dataset_name}', position=0, leave=True)
         sample_offset = 0
         for batch_idx, batch in enumerate(valid_dataloader):
-            batch_tensor = [t.to(device) for t in batch[:3]]
-            batch_numpy = [t.numpy() for t in batch[:3]]
+            batch_tensor = [t.to(device) for t in batch[:5]] # 3 for svtrv2 or 5 for eduor
+            batch_numpy = [t.numpy() for t in batch[:5]] # 3 or 5
             raw_images = batch[3] if len(batch) > 3 else None
             preds = model(batch_tensor[0], data=batch_tensor[1:])
             post_result = post_process(preds, batch_numpy)
-            if isinstance(post_result, tuple):
-                texts, gts = post_result
+
+            selected_result = post_result
+            if use_gtc_decode and isinstance(post_result, list) and len(post_result) == 2:
+                # GTCLabelDecode returns [gtc_result, ctc_result]
+                selected_result = post_result[0] if infer_branch == 'ssm' else post_result[1]
+
+            if isinstance(selected_result, tuple):
+                texts, gts = selected_result
             else:
-                texts, gts = post_result, None
+                texts, gts = selected_result, None
 
             for i, (txt, prob) in enumerate(texts):
                 gt_text = ''
                 if gts is not None and i < len(gts):
                     # gts elements are (text, prob)
                     gt_text = gts[i][0]
-                # 标点标准化后再计算 NED
+                # 鏍囩偣鏍囧噯鍖栧悗鍐嶈绠?NED
                 txt_norm = replace_punctuation(txt)
                 gt_norm = replace_punctuation(gt_text)
                 ned = 1 - Levenshtein.normalized_distance(txt_norm, gt_norm) if gt_norm is not None else 0.0
@@ -136,7 +156,7 @@ def dump_predictions(trainer, datadir, output_log, dataset_name, image_bytes):
                 num += 1
                 if int(ned) == 1:
                     true_num += 1
-                # 输出格式对齐：img_name, type, label, pred, NED
+                # 杈撳嚭鏍煎紡瀵归綈锛歩mg_name, type, label, pred, NED
                 img_name = f"{dataset_name}_{sample_offset + i}"
                 output_log['img_name'].append(img_name)
                 output_log['type'].append(dataset_name)
@@ -161,10 +181,11 @@ def main():
     FLAGS = parse_args()
     cfg = Config(FLAGS.config)
     FLAGS = vars(FLAGS)
+    infer_branch = FLAGS.get('infer_branch', 'ssm')
     opt = FLAGS.pop('opt')
     cfg.merge_dict(FLAGS)
     cfg.merge_dict(opt)
-    cfg = prepare_cfg(cfg)
+    cfg = prepare_cfg(cfg, infer_branch=infer_branch)
 
     save_pred_xlsx = FLAGS.get('save_pred_xlsx')
     if save_pred_xlsx is None:
@@ -172,6 +193,7 @@ def main():
     os.makedirs(os.path.dirname(save_pred_xlsx), exist_ok=True)
 
     trainer = Trainer(cfg, mode='eval')
+    trainer.logger.info(f'Inference branch: {infer_branch}')
 
     data_dirs_list = []
     if cfg.cfg['Eval']['dataset'].get('data_dir_list', None):
@@ -182,11 +204,23 @@ def main():
             data_dirs_list = [[data_dir_single]]
 
     # Optional custom override example (keep commented):
+    # data_dirs_list = [[
+    #     r'/ipfs/lirunrui/lmdb_dataset/zuowen_120/images_lines_split_en_lmdb',
+    # ]]
     data_dirs_list = [[
-        # r'/a800data1/lirunrui/origin_datasets/bnu_en_benchmark_lmdb/common_0'
-        r'/ipfs/lirunrui/lmdb_dataset/zuowen_120/images_lines_split_en_lmdb',
+        r'/a800data1/lirunrui/origin_datasets/bnu_en_benchmark_lmdb/common_0',
+        r'/a800data1/lirunrui/origin_datasets/bnu_en_benchmark_lmdb/LongText_1',
+        r'/a800data1/lirunrui/origin_datasets/bnu_en_benchmark_lmdb/UltraLongText_2',
+        r'/a800data1/lirunrui/origin_datasets/bnu_en_benchmark_lmdb/illegibleText_3',
+        r'/a800data1/lirunrui/origin_datasets/bnu_en_benchmark_lmdb/unspacedText_4',
+        r'/a800data1/lirunrui/origin_datasets/bnu_en_benchmark_lmdb/heavilyStrickenthrough_5',
+        r'/a800data1/lirunrui/origin_datasets/bnu_en_benchmark_lmdb/lightlyStrickenthrough_6',
+        r'/a800data1/lirunrui/origin_datasets/bnu_en_benchmark_lmdb/textInsertion_7',
+        r'/a800data1/lirunrui/origin_datasets/bnu_en_benchmark_lmdb/textInversion_8',
+        r'/a800data1/lirunrui/origin_datasets/bnu_en_benchmark_lmdb/textReplacement_9',
+        r'/a800data1/lirunrui/origin_datasets/bnu_en_benchmark_lmdb/tailSupply_10',
+        r'/a800data1/lirunrui/origin_datasets/bnu_en_benchmark_lmdb/complexText_11',
     ]]
-
     output_log = OrderedDict([
         ('img_name', []),
         ('type', []),
@@ -203,7 +237,14 @@ def main():
     for data_dirs in data_dirs_list:
         for datadir in data_dirs:
             dataset_name = datadir[:-1].split('/')[-1] if datadir.endswith('/') else datadir.split('/')[-1]
-            pnacc, ned_mean, num = dump_predictions(trainer, datadir, output_log, dataset_name, image_bytes)
+            pnacc, ned_mean, num = dump_predictions(
+                trainer,
+                datadir,
+                output_log,
+                dataset_name,
+                image_bytes,
+                infer_branch=infer_branch,
+            )
             print(f"{dataset_name}:\t\t acc: {100 * pnacc:6g}, norm_edit_dis:{100 * ned_mean:6g}")
             every_PNacc_list.append(pnacc)
             every_ned_list.append(ned_mean)
@@ -253,14 +294,24 @@ def main():
             wb.save(save_pred_xlsx)
         except Exception as embed_err:
             print(f"[WARN] Failed to embed images into XLSX ({embed_err}). Ensure openpyxl is installed.")
-        # 汇总日志
         total_acc = (total_True_num / total_num) if total_num else 0.0
         total_ned = float(np.mean(total_ned_list)) if total_ned_list else 0.0
         s_mean_acc = float(np.mean(every_PNacc_list)) if every_PNacc_list else 0.0
         s_mean_ned = float(np.mean(every_ned_list)) if every_ned_list else 0.0
-        # 简单 S_weight（权重全为1）
-        s_weight_acc = float(np.sum(np.array(every_PNacc_list))) if every_PNacc_list else 0.0
-        s_weight_ned = float(np.sum(np.array(every_ned_list))) if every_ned_list else 0.0
+        if every_PNacc_list:
+            acc_arr = np.array(every_PNacc_list, dtype=np.float32)
+            ned_arr = np.array(every_ned_list, dtype=np.float32)
+            if len(acc_arr) == len(S_WEIGHT):
+                weights = S_WEIGHT / np.sum(S_WEIGHT)
+                s_weight_acc = float(np.sum(acc_arr * weights))
+                s_weight_ned = float(np.sum(ned_arr * weights))
+            else:
+                print(f"[WARN] S_WEIGHT length mismatch: metrics={len(acc_arr)}, weights={len(S_WEIGHT)}. Fallback to S_mean.")
+                s_weight_acc = s_mean_acc
+                s_weight_ned = s_mean_ned
+        else:
+            s_weight_acc = 0.0
+            s_weight_ned = 0.0
         print(f"total:\t\t acc: {100 * total_acc:6g}, norm_edit_dis:{100 * total_ned:6g}")
         print(f"S_mean:\t\t acc: {100 * s_mean_acc:6g}, norm_edit_dis:{100 * s_mean_ned:6g}")
         print(f"S_weight:\t\t acc: {100 * s_weight_acc:6g}, norm_edit_dis:{100 * s_weight_ned:6g}")
