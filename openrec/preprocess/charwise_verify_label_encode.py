@@ -12,6 +12,8 @@ CharWiseVerifyLabelEncode (v4):
     - per_char_ids_lengths: [max_text_len] per-char IDS content lengths
 """
 
+import re
+
 import numpy as np
 
 from tools.utils.ids_to_tree import load_char_to_ids
@@ -21,6 +23,28 @@ from .ctc_label_encode import BaseRecLabelEncode
 def _load_list(path):
     with open(path, "r", encoding="utf-8") as f:
         return [ln.strip("\n\r") for ln in f if ln.strip("\n\r")]
+
+
+_CDP_RE = re.compile(r"&CDP-[0-9A-Fa-f]+;")
+
+
+def _tokenize_ids(ids_str: str):
+    s = str(ids_str).strip()
+    if not s:
+        return []
+    if s.startswith("<") and s.endswith(">") and len(s) >= 3:
+        return [s]
+    toks = []
+    i = 0
+    while i < len(s):
+        m = _CDP_RE.match(s, i)
+        if m is not None:
+            toks.append(m.group(0))
+            i = m.end()
+        else:
+            toks.append(s[i])
+            i += 1
+    return toks
 
 
 class CharWiseVerifyLabelEncode(BaseRecLabelEncode):
@@ -105,11 +129,10 @@ class CharWiseVerifyLabelEncode(BaseRecLabelEncode):
             if ids_str is None:
                 ids_str = ch if ch in self.ids_dict else "<unk>"
 
-            # Tokenize IDS string
-            if ids_str.startswith("<") and ids_str.endswith(">"):
-                ids_tokens = [ids_str]
-            else:
-                ids_tokens = list(ids_str)
+            # Tokenize IDS string:
+            # - keep <...> as one token
+            # - keep &CDP-xxxx; as one token
+            ids_tokens = _tokenize_ids(ids_str)
 
             # Map to IDS vocab ids
             ids_token_ids = [
