@@ -37,7 +37,6 @@ class RecGTCMetric(object):
                  training=False,
                  *args,
                  **kwargs):
-
         ctc_metric = self.ctc_metric(pred_label[1], batch, training=training)
         gtc_metric = self.gtc_metric(pred_label[0], batch, training=training)
         ctc_metric['gtc_acc'] = gtc_metric['acc']

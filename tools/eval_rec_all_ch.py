@@ -51,11 +51,11 @@ def main():
         trainer.logger.info('{}:{}'.format(k, v))
 
     data_dirs_list = [[
-    #   r'/a800data1/lirunrui/origin_datasets/bchw_dataset/scene/scene_test',
-    #   r'/a800data1/lirunrui/origin_datasets/bchw_dataset/web/web_test',
-    #   r'/a800data1/lirunrui/origin_datasets/bchw_dataset/document/document_test',
-    #   r'/a800data1/lirunrui/origin_datasets/bchw_dataset/hw/hw_test',
-      r'/a800data1/lirunrui/lmdb_output/new_Visual_C3/test_correct',
+      r'/a800data1/lirunrui/origin_datasets/bchw_dataset/scene/scene_test',
+      r'/a800data1/lirunrui/origin_datasets/bchw_dataset/web/web_test',
+      r'/a800data1/lirunrui/origin_datasets/bchw_dataset/document/document_test',
+      r'/a800data1/lirunrui/origin_datasets/bchw_dataset/hw/hw_test',
+    #   r'/a800data1/lirunrui/lmdb_output/new_Visual_C3/test_correct',
         # r'/a800data1/lirunrui/origin_datasets/bnu_zh_benchmark_lmdb/common_0',
         # r'/a800data1/lirunrui/origin_datasets/bnu_zh_benchmark_lmdb/UltraLongText_2',
         # r'/a800data1/lirunrui/origin_datasets/bnu_zh_benchmark_lmdb/LongText_1',

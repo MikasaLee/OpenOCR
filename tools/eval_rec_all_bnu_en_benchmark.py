@@ -69,8 +69,8 @@ def parse_args():
     parser.add_argument(
         '--infer_branch',
         type=str,
-        default='ssm',
-        choices=['ssm', 'pph'],
+        default='ctc',
+        choices=['ctc', 'gtc'],
         help='Inference branch for GTCDecoder.',
     )
     parser.add_argument(
@@ -83,7 +83,7 @@ def parse_args():
     return args
 
 
-def prepare_cfg(cfg, infer_branch='ssm'):
+def prepare_cfg(cfg, infer_branch='ctc'):
     # Align with eval_rec_all_ch tweaks
     if cfg.cfg['Global']['output_dir'][-1] == '/':
         cfg.cfg['Global']['output_dir'] = cfg.cfg['Global']['output_dir'][:-1]
@@ -98,7 +98,7 @@ def prepare_cfg(cfg, infer_branch='ssm'):
     if 'real_ratio' not in keep_keys:
         keep_keys.append('real_ratio')
 
-    if infer_branch == 'pph':
+    if infer_branch == 'gtc':
         if cfg.cfg.get('Architecture', {}).get('Decoder', {}).get('name') == 'GTCDecoder':
             cfg.cfg['Architecture']['Decoder']['infer_gtc'] = True
         if cfg.cfg.get('PostProcess', {}).get('name') == 'GTCLabelDecode':
@@ -106,7 +106,7 @@ def prepare_cfg(cfg, infer_branch='ssm'):
     return cfg
 
 
-def dump_predictions(trainer, datadir, output_log, dataset_name, image_bytes, infer_branch='ssm'):
+def dump_predictions(trainer, datadir, output_log, dataset_name, image_bytes, infer_branch='ctc'):
     config_each = trainer.cfg.copy()
     if 'RatioDataSet' in config_each['Eval']['dataset']['name']:
         config_each['Eval']['dataset']['data_dir_list'] = [datadir]
@@ -136,7 +136,7 @@ def dump_predictions(trainer, datadir, output_log, dataset_name, image_bytes, in
             selected_result = post_result
             if use_gtc_decode and isinstance(post_result, list) and len(post_result) == 2:
                 # GTCLabelDecode returns [gtc_result, ctc_result]
-                selected_result = post_result[0] if infer_branch == 'ssm' else post_result[1]
+                selected_result = post_result[0] if infer_branch == 'gtc' else post_result[1]
 
             if isinstance(selected_result, tuple):
                 texts, gts = selected_result
@@ -181,7 +181,7 @@ def main():
     FLAGS = parse_args()
     cfg = Config(FLAGS.config)
     FLAGS = vars(FLAGS)
-    infer_branch = FLAGS.get('infer_branch', 'ssm')
+    infer_branch = FLAGS.get('infer_branch', 'ctc')
     opt = FLAGS.pop('opt')
     cfg.merge_dict(FLAGS)
     cfg.merge_dict(opt)

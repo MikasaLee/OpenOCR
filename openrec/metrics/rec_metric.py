@@ -101,6 +101,7 @@ class RecMetric(object):
     def eval_all_metric(self, pred_label, batch=None, *args, **kwargs):
         if self.with_ratio:
             ratio = batch[-1]
+        print(f'pred_label: {pred_label}, batch: {batch}')
         preds, labels = pred_label
         correct_num = 0
         correct_num_real = 0
