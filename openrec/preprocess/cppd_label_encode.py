@@ -160,8 +160,14 @@ class CPPDLabelEncode(BaseRecLabelEncode):
                 text_node_dict.update({i_c: 1})
         for ic in list(text_node_dict.keys()):
             character_index.remove(ic)
-        none_char_index = random.sample(character_index,
-                                        37 - len(list(text_node_dict.keys())))
+        # none_char_index = random.sample(character_index,
+        #                                 37 - len(list(text_node_dict.keys())))
+        sample_num = min(   # change by lirunrui 2024-06-17, avoid error when character_index is less than 37
+            max(0, 37 - len(list(text_node_dict.keys()))),
+            len(character_index),
+        )
+        none_char_index = random.sample(character_index, sample_num)
+
         for ic in none_char_index:
             text_node_dict[ic] = 0
 

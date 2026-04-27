@@ -110,7 +110,8 @@ class ASTERDecoder(nn.Module):
             out_channels=out_channels - 2,
             attndim=attndim,
         )
-        self.embed_fc = nn.Linear(300, self.hiddendim)
+        if seed:
+            self.embed_fc = nn.Linear(300, self.hiddendim)
 
     def get_initial_state(self, embed, tile_times=1):
         assert embed.shape[1] == 300

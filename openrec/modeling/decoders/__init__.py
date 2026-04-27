@@ -40,6 +40,14 @@ class_to_module = {
     'CharWiseVerifyDecoderCoupled': '.charwise_verify_decoder_coupled',
     'NRTRDecoderTest': '.nrtr_decoder_test',
     'NRTRRTDDecoder': '.nrtr_rtd_decoder',
+
+    'LocalGlobalVerifyDecoder': '.local_global_verify_decoder',
+    'DualLevelVerifyDecoder': '.duallevel_verify_decoder',
+
+    'CharWiseVerifyStyleDecoder': '.charwise_verify_style_decoder',
+    'CharWiseVerifyStyleARDecoder': '.charwise_verify_style_ar_decoder',
+
+    'TANDecoder': '.tan_decoder',
 }
 
 

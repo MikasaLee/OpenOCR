@@ -126,6 +126,16 @@ MODULE_MAPPING = {
     'TextIDSTreeMultiLabelEncodev2': '.text_ids_tree_multi_label_encodev2',
     'CharWiseVerifyLabelEncode': '.charwise_verify_label_encode',
     'RTDLabelEncode': '.rtd_label_encode',
+    'TANLabelEncode': '.tan_label_encode',
+
+
+
+
+
+
+
+
+
     'ABINetAug': '.rec_aug',
     'BDA': '.rec_aug',
     'PARSeqAug': '.rec_aug',

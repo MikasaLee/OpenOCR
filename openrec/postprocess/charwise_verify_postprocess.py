@@ -29,6 +29,7 @@ class CharWiseVerifyPostProcess:
 
         self.text_decoder.get_ignored_tokens = lambda: [0, 1, 2]
         self.ids_decoder.get_ignored_tokens = lambda: [0, 1, 2]
+        self.character = self.text_decoder.character
 
         self.use_space_char = use_space_char
 
@@ -48,6 +49,9 @@ class CharWiseVerifyPostProcess:
 
     def get_character_num(self):
         return len(self.text_decoder.character)
+
+    def get_ignored_tokens(self):
+        return self.text_decoder.get_ignored_tokens()
 
     def map_ids_to_text(self, ids_seq_str):
         """Map IDS string to text via ids2char lookup. Unmapped → 'X'."""

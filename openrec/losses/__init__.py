@@ -26,6 +26,9 @@ name_to_module = {
     'TextIDSTreeLossv2': '.text_ids_tree_lossv2',
     'CharWiseVerifyLoss': '.charwise_verify_loss',
     'RTDLoss': '.rtd_loss',
+    'CharWiseVerifyExistDisplayLoss': '.charwise_verify_loss_exist_display',
+
+    'TANLoss': '.tan_loss',
 }
 
 

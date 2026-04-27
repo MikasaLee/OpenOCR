@@ -1,0 +1,120 @@
+Global:
+  device: gpu
+  epoch_num: 100
+  log_smooth_window: 20
+  print_batch_step: 10
+  output_dir: ./outputs/output_new_visualC3_charLevel/tan/
+  save_epoch_step: [1, 25]
+  eval_batch_step: [0, 20000000]
+  eval_epoch_step: [0, 1]
+  cal_metric_during_train: False
+  pretrained_model:
+  checkpoints:
+  use_tensorboard: false
+  infer_img:
+  use_amp: false
+  character_dict_path: &character_dict_path ./tools/utils/dict/visual_c3_ids/char_dict.txt
+  ids_dict_path: &ids_dict_path ./tools/utils/dict/visual_c3_ids/minimal_ids_dict.txt
+  char_to_ids_path: &char_to_ids_path ./tools/utils/dict/visual_c3_ids/char_to_ids.txt
+  max_text_length: &max_text_length 25
+  use_space_char: &use_space_char True
+  save_res_path: ./outputs/output_new_visualC3_charLevel/tan/predicts_tan.txt
+
+Optimizer:
+  name: AdamW
+  lr: 6.5e-4
+  weight_decay: 0.05
+  filter_bias_and_bn: False
+
+LRScheduler:
+  name: OneCycleLR
+  warmup_epoch: 5
+  cycle_momentum: False
+
+Architecture:
+  model_type: rec
+  algorithm: TAN
+  in_channels: 1
+  Transform:
+  Encoder:
+  Decoder:
+    name: TANDecoder
+    relation_dict_path: *relation_dict_path
+    n: 256
+    m: 256
+    d: 936
+    dim_attention: 512
+    max_len: *max_text_length
+    growth_rate: 24
+    reduction: 0.5
+    bottleneck: True
+    use_dropout: True
+    lpred_loss_weight: 1.0
+    rrepred_loss_weight: 0.5
+    triplet_loss_weight: 0.05
+
+Loss:
+  name: TANLoss
+
+PostProcess:
+  name: TANLabelDecode
+  character_dict_path: *character_dict_path
+  relation_dict_path: *relation_dict_path
+  use_space_char: *use_space_char
+
+Metric:
+  name: RecMetric
+  main_indicator: acc
+  ignore_space: False
+  is_lower: False
+
+Train:
+  dataset:
+    name: LMDBDataSet
+    data_dir: /ipfs/lirunrui/lmdb_dataset/visual_c3_new_charLevel/train_lmdb  # replace with your char-level LMDB root
+    transforms:
+      - DecodeImagePIL:
+          img_mode: Gray
+      - PARSeqAugPIL:
+      - TANLabelEncode:
+          character_dict_path: *character_dict_path
+          relation_dict_path: *relation_dict_path
+          use_space_char: *use_space_char
+          max_text_length: *max_text_length
+          # LMDB label should be a TAN token sequence.
+          # For multi-char tokens such as &CDP-85F0;, store labels with spaces between tokens.
+      - RecTVResize:
+          image_shape: [128, 128]
+          padding: False
+      - KeepKeys:
+          keep_keys: ['image', 'label', 'length', 'ly', 'ly_mask', 'ry', 'ry_mask', 'lp', 'rp', 're', 'rre', 'rre_mask']
+  loader:
+    shuffle: True
+    batch_size_per_card: &batch_size_per_card 128
+    drop_last: True
+    num_workers: 8
+
+Eval:
+  dataset:
+    name: LMDBDataSet
+    data_dir: /ipfs/lirunrui/lmdb_dataset/visual_c3_new_charLevel/test_lmdb/test_correct  # replace with your char-level LMDB split
+    transforms:
+      - DecodeImagePIL:
+          img_mode: Gray
+      - TANLabelEncode:
+          character_dict_path: *character_dict_path
+          relation_dict_path: *relation_dict_path
+          use_space_char: *use_space_char
+          max_text_length: *max_text_length
+          # LMDB label should be a TAN token sequence.
+          # For multi-char tokens such as &CDP-85F0;, store labels with spaces between tokens.
+      - RecTVResize:
+          image_shape: [128, 128]
+          padding: False
+      - KeepKeys:
+          keep_keys: ['image', 'label', 'length', 'ly', 'ly_mask', 'ry', 'ry_mask', 'lp', 'rp', 're', 'rre', 'rre_mask']
+  loader:
+    shuffle: False
+    batch_size_per_card: *batch_size_per_card
+    drop_last: False
+    num_workers: 8

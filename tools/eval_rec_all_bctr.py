@@ -1,6 +1,7 @@
 import io
 import os
 import sys
+import unicodedata
 import torch
 import numpy as np
 from collections import OrderedDict
@@ -64,12 +65,12 @@ def filter_meta_tensor_keys(batch_tensor, batch_numpy, keep_keys):
 def normalize_text(text) -> str:
     """Normalize decoded text payload to plain string."""
     if text is None:
-        return ''
-    if isinstance(text, str):
-        return text
-    if isinstance(text, bytes):
-        return text.decode('utf-8', errors='ignore')
-    if isinstance(text, (list, tuple)):
+        out = ''
+    elif isinstance(text, str):
+        out = text
+    elif isinstance(text, bytes):
+        out = text.decode('utf-8', errors='ignore')
+    elif isinstance(text, (list, tuple)):
         parts = []
         for item in text:
             if isinstance(item, bytes):
@@ -78,8 +79,13 @@ def normalize_text(text) -> str:
                 parts.append(normalize_text(item))
             else:
                 parts.append(str(item))
-        return ''.join(parts)
-    return str(text)
+        out = ''.join(parts)
+    else:
+        out = str(text)
+
+    out = out.replace('<unk>', '')
+    out = unicodedata.normalize('NFKC', out)
+    return out
 
 
 def to_float(v, default=1.0):
@@ -350,6 +356,7 @@ def dump_predictions(trainer,
                 # 标点标准化后再计算 NED
                 txt_norm = replace_punctuation(txt)
                 gt_norm = replace_punctuation(gt_text)
+                # print(f'txt_norm: {txt_norm}, gt_norm: {gt_norm}')
                 ned = 1 - Levenshtein.normalized_distance(txt_norm, gt_norm) if gt_norm is not None else 0.0
                 ned_list.append(ned)
                 num += 1
@@ -398,7 +405,7 @@ def main():
     if not no_save_xlsx:
         save_pred_xlsx = FLAGS.get('save_pred_xlsx')
         if save_pred_xlsx is None:
-            save_pred_xlsx = os.path.join(cfg.cfg['Global']['output_dir'], 'preds_dump.xlsx')
+            save_pred_xlsx = os.path.join(cfg.cfg['Global']['output_dir'], 'preds_dump_hw.xlsx')   # 只推hw
         save_dir = os.path.dirname(save_pred_xlsx)
         if save_dir:
             os.makedirs(save_dir, exist_ok=True)
@@ -420,9 +427,9 @@ def main():
             data_dirs_list = [[data_dir_single]]
 
     data_dirs_list = [[
-      r'/a800data1/lirunrui/origin_datasets/bchw_dataset/scene/scene_test',
-      r'/a800data1/lirunrui/origin_datasets/bchw_dataset/web/web_test',
-      r'/a800data1/lirunrui/origin_datasets/bchw_dataset/document/document_test',
+    #   r'/a800data1/lirunrui/origin_datasets/bchw_dataset/scene/scene_test',
+    #   r'/a800data1/lirunrui/origin_datasets/bchw_dataset/web/web_test',
+    #   r'/a800data1/lirunrui/origin_datasets/bchw_dataset/document/document_test',
       r'/a800data1/lirunrui/origin_datasets/bchw_dataset/hw/hw_test',
     ]]
     output_log = OrderedDict([

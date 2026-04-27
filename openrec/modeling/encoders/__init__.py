@@ -28,6 +28,8 @@ name_to_module = {
     'SALGEncoder': '.eduocr_salg_encoder',
     'TAMER_Encoder': '.tamer_encoder',
     'TAMER_DualEncoder': '.tamer_dual_encoder',
+    'SVTRv2LNConvTwo33DualView': '.svtrv2_lnconv_two33_dualview',
+    'SVTRv2LNConvTwo33DualLevel': '.svtrv2_lnconv_two33_duallevel',
 }
 
 

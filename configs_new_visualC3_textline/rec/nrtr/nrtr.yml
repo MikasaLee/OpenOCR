@@ -8,7 +8,7 @@ Global:
   # evaluation is run every 2000 iterations
   eval_batch_step: [0, 2000]
   eval_epoch_step: [0, 1]
-  cal_metric_during_train: True
+  cal_metric_during_train: False
   pretrained_model:
   checkpoints:
   use_tensorboard: false

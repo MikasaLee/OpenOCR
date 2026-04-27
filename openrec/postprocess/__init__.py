@@ -24,7 +24,9 @@ module_mapping = {
     'CharWiseVerifyPostProcess': '.charwise_verify_postprocess',
     'TAMERLabelDecode': '.tamer_postprocess',
     'RTDLabelDecode': '.rtd_postprocess',
-    'GTCLabelDecode': '.'  # 当前模块中的类
+    'GTCLabelDecode': '.',  # 当前模块中的类
+
+    'TANLabelDecode': '.tan_postprocess',
 }
 
 
