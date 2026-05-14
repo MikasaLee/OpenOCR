@@ -262,8 +262,15 @@ class ConvBlock(nn.Module):
         if use_GBC:
             self.mixer = nn.Sequential(
                 DepthwiseSeparableConv(in_channels=dim,out_channels=dim,kernel_size=(3, 51),padding=(1, 25)) ,
-                *[nn.Conv2d(dim, dim, 3, 1, 1, groups=num_heads)
-                for i in range(num_conv)]
+                nn.GELU(),
+                *[
+                    layer
+                    for _ in range(num_conv)
+                    for layer in (
+                        nn.Conv2d(dim, dim, 3, 1, 1, groups=num_heads),
+                        nn.GELU()
+                    )
+                ]
             )
         else: 
             self.mixer = nn.Sequential(*[
@@ -371,6 +378,7 @@ class SVTRStage(nn.Module):
                  eps=1e-6,
                  num_conv=[2] * 3,
                  downsample=None,
+                 use_GBC = False,
                  **kwargs):
         super().__init__()
         self.dim = dim
@@ -388,6 +396,7 @@ class SVTRStage(nn.Module):
                               norm_layer=norm_layer,
                               eps=eps,
                               num_conv=num_conv[i],
+                              use_GBC = use_GBC,
                     )
                 )
             elif mixer[i] == 'ConvRe1D':
@@ -400,7 +409,9 @@ class SVTRStage(nn.Module):
                               drop_path=drop_path[i],
                               norm_layer=norm_layer,
                               eps=eps,
-                              num_conv=num_conv[i],))
+                              num_conv=num_conv[i],
+                              use_GBC = use_GBC,
+                              ))
                 self.blocks.append(FlattenTranspose())
             else:
                 if mixer[i] == 'Global':
@@ -410,6 +421,7 @@ class SVTRStage(nn.Module):
                     self.blocks.append(FlattenTranspose())
                 elif mixer[i] == 'FGlobalRe2D':
                     block = FlattenBlockRe2D
+
                 self.blocks.append(
                     block(
                         dim=dim,

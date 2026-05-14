@@ -3,19 +3,19 @@ Global:
   epoch_num: 40
   log_smooth_window: 20
   print_batch_step: 10
-  output_dir: ./outputs/output_bnu_en/eduocr_salg/
+  output_dir: ./outputs/output_bnu_en/svtrv2_smtr_gtc_rctc_msr2/
   save_epoch_step: [10, 10]
   eval_epoch_step: [0, 1]
   eval_batch_step: [0, 2000]
-  cal_metric_during_train: False
-  pretrained_model: 
-  checkpoints: ./outputs/output_bnu_en/eduocr_salg/latest.pth
+  cal_metric_during_train: True
+  pretrained_model:
+  checkpoints:
   use_tensorboard: false
   infer_img:
   character_dict_path: &character_dict_path ./tools/utils/EN_symbol_dict.txt
   max_text_length: &max_text_length 100
   use_space_char: &use_space_char True
-  save_res_path: ./outputs/output_bnu_en/eduocr_salg/predicts_eduocr.txt
+  save_res_path: ./outputs/output_bnu_en/svtrv2_smtr_gtc_rctc_msr2/predicts_svtrv2_smtr_gtc_rctc_msr.txt
   use_amp: True
 
 Optimizer:
@@ -31,89 +31,97 @@ LRScheduler:
 
 Architecture:
   model_type: rec
-  algorithm: EduOCR
+  algorithm: SVTRv2
   in_channels: 3
   Transform:
   Encoder:
-    name: SALGEncoder
+    name: SVTRv2LNConvTwo33
     use_pos_embed: False
-    max_sz: [32, 512]
     dims: [128, 256, 384]
     depths: [6, 6, 6]
     num_heads: [4, 8, 12]
-    mixer: [['Conv', 'Conv', 'Conv', 'Conv', 'Conv', 'Conv'],
-            ['Conv', 'Conv', 'FGlobal', 'Global', 'Global', 'Global'],
-            ['Global', 'Global', 'Global', 'Global', 'Global', 'Global']]
+    mixer: [['Conv','Conv','Conv','Conv','Conv','Conv'],['Conv','Conv','FGlobal','Global','Global','Global'],['Global','Global','Global','Global','Global','Global']]
     local_k: [[5, 5], [5, 5], [-1, -1]]
-    sub_k: [[2, 1], [2, 1], [-1, -1]]
-    downsample: [True, True, False]
+    sub_k: [[1, 1], [2, 1], [-1, -1]]
     last_stage: false
-    use_GBC: True
     feat2d: True
   Decoder:
     name: GTCDecoder
     infer_gtc: True
     detach: False
     gtc_decoder:
-      name: SSMDecoder
-      num_layers: 3
-      nhead: 8
+      name: SMTRDecoder
+      num_layer: 1
+      ds: True
       max_len: *max_text_length
+      next_mode: &next True
+      sub_str_len: &subsl 5
     ctc_decoder:
-      name: PPHDecoder
-      num_heads: 8
+      name: RCTCDecoder
 
 Loss:
   name: GTCLoss
-  ctc_weight: 0.05
-  gtc_weight: 1.0
+  ctc_weight: 0.1
   gtc_loss:
-    name: ARLoss
-    label_smoothing: 0.0
+    name: SMTRLoss
 
 PostProcess:
   name: GTCLabelDecode
-  only_gtc: False
   gtc_label_decode:
-    name: ARLabelDecode
+    name: SMTRLabelDecode
+    next_mode: *next
   character_dict_path: *character_dict_path
   use_space_char: *use_space_char
 
 Metric:
   name: RecGTCMetric
-  main_indicator: gtc_acc
-  is_filter: False
+  main_indicator: acc
+  # is_filter: True
 
 Train:
   dataset:
-    name: LMDBDataSet
-    data_dir: /a800data1/lirunrui/origin_datasets/bnu_en_htr_train/
+    name: RatioDataSetTVResizeRecursive
+    ds_width: True
+    padding: false
+    # base_shape: &base_shape [[32, 32], [64, 32], [96, 32], [128, 32]]
+    # base_h: &base_h 32
+    data_dir_list: ['/a800data1/lirunrui/origin_datasets/bnu_en_htr_train/']
     transforms:
       - DecodeImagePIL:
           img_mode: RGB
       - PARSeqAugPIL:
       - GTCLabelEncode:
           gtc_label_encode:
-            name: ARLabelEncode
+            name: SMTRLabelEncode
+            sub_str_len: *subsl
           character_dict_path: *character_dict_path
           use_space_char: *use_space_char
           max_text_length: *max_text_length
-      - RecTVResize:
-          image_shape: [32, 512]
-          padding: False
       - KeepKeys:
-          keep_keys: ['image', 'label', 'length', 'ctc_label', 'ctc_length']
+          keep_keys: ['image', 'label', 'label_subs', 'label_next', 'length_subs',
+            'label_subs_pre', 'label_next_pre', 'length_subs_pre', 'length', 'ctc_label', 'ctc_length']
+  sampler:
+    name: RatioSampler
+    scales: [[128, 32]]
+    first_bs: &bs 256
+    fix_bs: false
+    divided_factor: [4, 16]
+    is_training: True
   loader:
     shuffle: True
-    batch_size_per_card: 128
+    batch_size_per_card: *bs
     drop_last: True
-    num_workers: 4
+    max_ratio: &max_ratio 8
+    num_workers: 16
 
 Eval:
   dataset:
-    name: LMDBDataSet
-    # data_dir: /a800data1/lirunrui/origin_datasets/bnu_en_benchmark_lmdb/common_0
-    data_dir: /a800data1/lirunrui/origin_datasets/bnu_en_benchmark_lmdb/textInversion_8
+    name: RatioDataSetTVResizeRecursive
+    ds_width: True
+    padding: false
+    # base_shape: *base_shape
+    # base_h: *base_h
+    data_dir_list: ['/a800data1/lirunrui/origin_datasets/bnu_en_benchmark_lmdb/common_0']
     transforms:
       - DecodeImagePIL:
           img_mode: RGB
@@ -123,13 +131,18 @@ Eval:
           character_dict_path: *character_dict_path
           use_space_char: *use_space_char
           max_text_length: *max_text_length
-      - RecTVResize:
-          image_shape: [32, 512]
-          padding: False
       - KeepKeys:
           keep_keys: ['image', 'label', 'length', 'ctc_label', 'ctc_length']
+  sampler:
+    name: RatioSampler
+    scales: [[128, 32]]
+    first_bs: *bs
+    fix_bs: false
+    divided_factor: [4, 16]
+    is_training: False
   loader:
     shuffle: False
     drop_last: False
-    batch_size_per_card: 128
-    num_workers: 4
+    batch_size_per_card: *bs
+    max_ratio: *max_ratio
+    num_workers: 16
