@@ -427,9 +427,9 @@ def main():
             data_dirs_list = [[data_dir_single]]
 
     data_dirs_list = [[
-    #   r'/a800data1/lirunrui/origin_datasets/bchw_dataset/scene/scene_test',
-    #   r'/a800data1/lirunrui/origin_datasets/bchw_dataset/web/web_test',
-    #   r'/a800data1/lirunrui/origin_datasets/bchw_dataset/document/document_test',
+      r'/a800data1/lirunrui/origin_datasets/bchw_dataset/scene/scene_test',
+      r'/a800data1/lirunrui/origin_datasets/bchw_dataset/web/web_test',
+      r'/a800data1/lirunrui/origin_datasets/bchw_dataset/document/document_test',
       r'/a800data1/lirunrui/origin_datasets/bchw_dataset/hw/hw_test',
     ]]
     output_log = OrderedDict([

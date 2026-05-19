@@ -29,5 +29,15 @@
 # CUDA_VISIBLE_DEVICES=0,1 torchrun --nproc_per_node=2 --master-port=25071 tools/train_rec.py --c configs_bnu_en/rec/eduocr/eduocr_padding.yml
 # CUDA_VISIBLE_DEVICES=0,1 torchrun --nproc_per_node=2 --master-port=25071 tools/train_rec.py --c configs_bnu_ch/rec/eduocr/eduocr_padding.yml
 
-CUDA_VISIBLE_DEVICES=0,1 torchrun --nproc_per_node=2 --master-port=25071 tools/train_rec.py --c configs_bnu_en/rec/eduocr/eduocr_2.yml
-CUDA_VISIBLE_DEVICES=0,1 torchrun --nproc_per_node=2 --master-port=25071 tools/train_rec.py --c configs_bnu_ch/rec/eduocr/eduocr_2.yml
+# CUDA_VISIBLE_DEVICES=0,1 torchrun --nproc_per_node=2 --master-port=25071 tools/train_rec.py --c configs_bnu_en/rec/eduocr/eduocr_2.yml
+# CUDA_VISIBLE_DEVICES=0,1 torchrun --nproc_per_node=2 --master-port=25071 tools/train_rec.py --c configs_bnu_ch/rec/eduocr/eduocr_2.yml
+
+
+# CUDA_VISIBLE_DEVICES=0,1 torchrun --nproc_per_node=2 --master-port=25071 tools/train_rec.py --c configs_bnu_zh/rec/svtrv2/svtrv2_smtr_gtc_rctc.yml 
+# CUDA_VISIBLE_DEVICES=0,1 torchrun --nproc_per_node=2 --master-port=25071 tools/train_rec.py --c configs_bnu_zh/rec/eduocr/eduocr.yml
+
+# CUDA_VISIBLE_DEVICES=0,1 torchrun --nproc_per_node=2 --master-port=25071 tools/train_rec.py --c configs_bnu_en/rec/eduocr/eduocr_2_rctc.yml
+# CUDA_VISIBLE_DEVICES=0,1 torchrun --nproc_per_node=2 --master-port=25071 tools/train_rec.py --c configs_bnu_zh/rec/eduocr/eduocr_rctc.yml
+
+CUDA_VISIBLE_DEVICES=0,1 torchrun --nproc_per_node=2 --master-port=25071 tools/train_rec.py --c configs_bnu_en/rec/eduocr/eduocr_2_rctc_padding.yml
+CUDA_VISIBLE_DEVICES=0,1 torchrun --nproc_per_node=2 --master-port=25071 tools/train_rec.py --c configs_bnu_zh/rec/eduocr/eduocr_rctc_padding.yml

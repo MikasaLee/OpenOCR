@@ -1,6 +1,8 @@
 import io
+import copy
 import os
 import sys
+import time
 import torch
 import numpy as np
 from collections import OrderedDict
@@ -16,6 +18,17 @@ from tools.data import build_dataloader
 from tools.engine.config import Config  
 from tools.engine.trainer import Trainer  
 from tools.utility import ArgsParser  
+from tools.eval_efficiency_utils import (
+    finalize_efficiency_stats,
+    init_efficiency_stats,
+    maybe_profile_first_batch,
+    merge_efficiency_stats,
+    print_efficiency_summary,
+    replace_gtc_decoder_with_gtc_only,
+    split_batch_tensors,
+    sync_device,
+    update_efficiency_stats,
+)
 
 S_WEIGHT = np.array([0.259, 0.159, 0.227, 0.029, 0.021, 0.133, 0.085, 0.017, 0.0, 0.03, 0.007, 0.033], dtype=np.float32)
 
@@ -98,12 +111,31 @@ def prepare_cfg(cfg, infer_branch='ctc'):
     if 'real_ratio' not in keep_keys:
         keep_keys.append('real_ratio')
 
-    if infer_branch == 'gtc':
-        if cfg.cfg.get('Architecture', {}).get('Decoder', {}).get('name') == 'GTCDecoder':
+    decoder_name = cfg.cfg.get('Architecture', {}).get('Decoder', {}).get('name')
+    post_name = cfg.cfg.get('PostProcess', {}).get('name')
+    if decoder_name == 'GTCDecoder' and infer_branch == 'ctc':
+        cfg.cfg['Architecture']['Decoder']['infer_gtc'] = False
+        if post_name == 'GTCLabelDecode':
+            cfg.cfg['PostProcess'] = {
+                'name': 'CTCLabelDecode',
+                'character_dict_path': cfg.cfg['Global']['character_dict_path'],
+                'use_space_char': cfg.cfg['Global']['use_space_char'],
+            }
+        if cfg.cfg.get('Metric', {}).get('name') == 'RecGTCMetric':
+            cfg.cfg['Metric']['name'] = 'RecMetric'
+            cfg.cfg['Metric']['main_indicator'] = 'acc'
+    elif infer_branch == 'gtc':
+        if decoder_name == 'GTCDecoder':
             cfg.cfg['Architecture']['Decoder']['infer_gtc'] = True
-        if cfg.cfg.get('PostProcess', {}).get('name') == 'GTCLabelDecode':
-            cfg.cfg['PostProcess']['only_gtc'] = False
+        if post_name == 'GTCLabelDecode':
+            cfg.cfg['PostProcess']['only_gtc'] = True
     return cfg
+
+
+def select_postprocess_batch(post_process, batch_numpy):
+    if post_process.__class__.__name__ == 'CTCLabelDecode' and len(batch_numpy) >= 5:
+        return [None] + batch_numpy[-2:]
+    return batch_numpy
 
 
 def dump_predictions(trainer, datadir, output_log, dataset_name, image_bytes, infer_branch='ctc'):
@@ -177,6 +209,115 @@ def dump_predictions(trainer, datadir, output_log, dataset_name, image_bytes, in
     return pnacc, ned_mean, num
 
 
+def dump_predictions_with_efficiency(trainer, datadir, output_log, dataset_name, image_bytes, infer_branch='ctc'):
+    config_each = copy.deepcopy(trainer.cfg)
+    if 'RatioDataSet' in config_each['Eval']['dataset']['name']:
+        config_each['Eval']['dataset']['data_dir_list'] = [datadir]
+    else:
+        config_each['Eval']['dataset']['data_dir'] = datadir
+    valid_dataloader = build_dataloader(config_each, 'Eval', trainer.logger)
+    trainer.logger.info(f'{datadir} valid dataloader has {len(valid_dataloader)} iters')
+
+    model = trainer.model
+    device = trainer.device
+    post_process = trainer.post_process_class
+    use_gtc_decode = trainer.cfg.get('PostProcess', {}).get('name') == 'GTCLabelDecode'
+    model.eval()
+    num = 0
+    true_num = 0
+    ned_list = []
+    eff_stats = init_efficiency_stats(
+        dataset_name=dataset_name,
+        num_batches=len(valid_dataloader),
+        cfg_batch_size=config_each['Eval']['loader'].get('batch_size_per_card', None),
+        model=model,
+    )
+
+    with torch.no_grad():
+        pbar = tqdm(total=len(valid_dataloader), desc=f'eval {dataset_name}', position=0, leave=True)
+        sample_offset = 0
+        prev_loop_end = time.perf_counter()
+        data_iter = iter(valid_dataloader)
+        for _batch_idx in range(len(valid_dataloader)):
+            t_fetch_start = prev_loop_end
+            batch = next(data_iter)
+            t_fetch_end = time.perf_counter()
+
+            t_prep_start = time.perf_counter()
+            batch_tensor, batch_numpy = split_batch_tensors(batch, device, max_tensor_items=5)
+            raw_images = batch[3] if len(batch) > 3 else None
+            t_prep_end = time.perf_counter()
+
+            maybe_profile_first_batch(eff_stats, model, batch_tensor, device)
+            sync_device(device)
+            t_model_start = time.perf_counter()
+            preds = model(batch_tensor[0], data=batch_tensor[1:])
+            sync_device(device)
+            t_model_end = time.perf_counter()
+
+            post_result = post_process(preds, select_postprocess_batch(post_process, batch_numpy))
+            selected_result = post_result
+            if use_gtc_decode and isinstance(post_result, list) and len(post_result) == 2:
+                selected_result = post_result[0] if infer_branch == 'gtc' else post_result[1]
+
+            if isinstance(selected_result, tuple):
+                texts, gts = selected_result
+            else:
+                texts, gts = selected_result, None
+
+            sample_records = []
+            for i, (txt, prob) in enumerate(texts):
+                gt_text = ''
+                if gts is not None and i < len(gts):
+                    gt_text = gts[i][0]
+                txt_norm = replace_punctuation(txt)
+                gt_norm = replace_punctuation(gt_text)
+                ned = 1 - Levenshtein.normalized_distance(txt_norm, gt_norm) if gt_norm is not None else 0.0
+                ned_list.append(ned)
+                num += 1
+                if int(ned) == 1:
+                    true_num += 1
+                sample_records.append({
+                    'img_name': f'{dataset_name}_{sample_offset + i}',
+                    'type': dataset_name,
+                    'label': gt_norm,
+                    'pred': txt_norm,
+                    'NED': float(ned),
+                    'sample_img': raw_images[i] if raw_images is not None else None,
+                })
+            t_post_end = time.perf_counter()
+
+            for record in sample_records:
+                output_log['img_name'].append(record['img_name'])
+                output_log['type'].append(record['type'])
+                output_log['label'].append(record['label'])
+                output_log['pred'].append(record['pred'])
+                output_log['NED'].append(record['NED'])
+                try:
+                    image_bytes.append(to_png_bytes(record['sample_img']))
+                except Exception:
+                    image_bytes.append(None)
+            t_dump_end = time.perf_counter()
+
+            update_efficiency_stats(
+                eff_stats,
+                num_samples=len(sample_records),
+                data_time=(t_fetch_end - t_fetch_start) + (t_prep_end - t_prep_start),
+                model_time=t_model_end - t_model_start,
+                post_time=t_post_end - t_model_end,
+                dump_time=t_dump_end - t_post_end,
+            )
+            sample_offset += len(texts)
+            pbar.update(1)
+            prev_loop_end = t_dump_end
+        pbar.close()
+
+    model.train()
+    pnacc = true_num / num if num else 0.0
+    ned_mean = float(np.mean(ned_list)) if ned_list else 0.0
+    return pnacc, ned_mean, num, eff_stats
+
+
 def main():
     FLAGS = parse_args()
     cfg = Config(FLAGS.config)
@@ -193,6 +334,8 @@ def main():
     os.makedirs(os.path.dirname(save_pred_xlsx), exist_ok=True)
 
     trainer = Trainer(cfg, mode='eval')
+    if infer_branch == 'gtc' and replace_gtc_decoder_with_gtc_only(trainer.model):
+        trainer.logger.info('Use GTC-only decoder for AR/SMTR FPS evaluation.')
     trainer.logger.info(f'Inference branch: {infer_branch}')
 
     data_dirs_list = []
@@ -234,10 +377,11 @@ def main():
     total_num = 0
     total_True_num = 0
     total_ned_list = []
+    total_eff_stats = None
     for data_dirs in data_dirs_list:
         for datadir in data_dirs:
             dataset_name = datadir[:-1].split('/')[-1] if datadir.endswith('/') else datadir.split('/')[-1]
-            pnacc, ned_mean, num = dump_predictions(
+            pnacc, ned_mean, num, eff_stats = dump_predictions_with_efficiency(
                 trainer,
                 datadir,
                 output_log,
@@ -246,11 +390,13 @@ def main():
                 infer_branch=infer_branch,
             )
             print(f"{dataset_name}:\t\t acc: {100 * pnacc:6g}, norm_edit_dis:{100 * ned_mean:6g}")
+            print_efficiency_summary(finalize_efficiency_stats(eff_stats))
             every_PNacc_list.append(pnacc)
             every_ned_list.append(ned_mean)
             total_num += num
             total_True_num += int(pnacc * num)
             total_ned_list.extend([ned_mean] * num)
+            total_eff_stats = merge_efficiency_stats(total_eff_stats, eff_stats)
 
     try:
         import pandas as pd
@@ -315,6 +461,8 @@ def main():
         print(f"total:\t\t acc: {100 * total_acc:6g}, norm_edit_dis:{100 * total_ned:6g}")
         print(f"S_mean:\t\t acc: {100 * s_mean_acc:6g}, norm_edit_dis:{100 * s_mean_ned:6g}")
         print(f"S_weight:\t\t acc: {100 * s_weight_acc:6g}, norm_edit_dis:{100 * s_weight_ned:6g}")
+        if total_eff_stats is not None:
+            print_efficiency_summary(finalize_efficiency_stats(total_eff_stats))
         print(f'Predictions (with NED) saved to {save_pred_xlsx}')
     except Exception as e:
         print(f'[WARN] Failed to save XLSX ({e}). Install pandas & openpyxl to enable XLSX export.')
