@@ -3,21 +3,21 @@ Global:
   epoch_num: 100
   log_smooth_window: 20
   print_batch_step: 10
-  output_dir: ./outputs/output_bctr/eduocr_2/
+  output_dir: ./outputs/output_bctr/eduocr_2_msr/
   save_epoch_step: [1, 50]
   # evaluation is run every 2000 iterations
   eval_batch_step: [0, 20000000]
   eval_epoch_step: [0, 1]
   cal_metric_during_train: False
   pretrained_model:
-  checkpoints: ./outputs/output_bctr/eduocr_2/latest.pth
+  checkpoints:
   use_tensorboard: false
   infer_img:
   # for data or label process
   character_dict_path: &character_dict_path ./tools/utils/ppocr_keys_v1.txt # ch
   max_text_length: &max_text_length 25
   use_space_char: &use_space_char True
-  save_res_path: ./outputs/output_bctr/eduocr_2/predicts_eduocr.txt
+  save_res_path: ./outputs/output_bctr/eduocr_2_msr/predicts_eduocr.txt
   use_amp: True
   
 Optimizer:
@@ -88,33 +88,48 @@ Metric:
 
 Train:
   dataset:
-    name: LMDBDataSet
-    data_dir: /a800data1/lirunrui/origin_datasets/bchw_dataset/bchw_train
+    name: RatioDataSetTVResize
+    ds_width: True
+    padding: false
+    data_dir_list: [
+      '/a800data1/lirunrui/origin_datasets/bchw_dataset/bchw_train/document_train',
+      '/a800data1/lirunrui/origin_datasets/bchw_dataset/bchw_train/scene_train',
+      '/a800data1/lirunrui/origin_datasets/bchw_dataset/bchw_train/hw_train',
+      '/a800data1/lirunrui/origin_datasets/bchw_dataset/bchw_train/web_train',
+      ]
     transforms:
-      - DecodeImagePIL:
-          img_mode: RGB
-      - PARSeqAugPIL:
-      - GTCLabelEncode:
-          gtc_label_encode:
-            name: ARLabelEncode
-          character_dict_path: *character_dict_path
-          use_space_char: *use_space_char
-          max_text_length: *max_text_length
-      - RecTVResize:
-          image_shape: [32, 128]
-          padding: False
-      - KeepKeys:
-          keep_keys: ['image', 'label', 'length', 'ctc_label', 'ctc_length']
+    - DecodeImagePIL:
+        img_mode: RGB
+    - PARSeqAugPIL:
+    - GTCLabelEncode:
+        gtc_label_encode:
+          name: ARLabelEncode
+        character_dict_path: *character_dict_path
+        use_space_char: *use_space_char
+        max_text_length: *max_text_length
+    - KeepKeys:
+        keep_keys: ['image', 'label', 'length', 'ctc_label', 'ctc_length']
+  sampler:
+    name: RatioSampler
+    scales: [[128, 32]] # w, h
+    # divide_factor: to ensure the width and height dimensions can be devided by downsampling multiple
+    first_bs: &bs 512
+    fix_bs: false
+    divided_factor: [4, 16] # w, h
+    is_training: True
   loader:
     shuffle: True
-    batch_size_per_card: &batch_size_per_card 512
+    batch_size_per_card: *bs
     drop_last: True
-    num_workers: 12
+    max_ratio: &max_ratio 8
+    num_workers: 4
 
 Eval:
   dataset:
-    name: LMDBDataSet
-    data_dir: /a800data1/lirunrui/origin_datasets/bchw_dataset/scene/scene_test
+    name: RatioDataSetTVResize
+    ds_width: True
+    padding: False
+    data_dir_list: ['/a800data1/lirunrui/origin_datasets/bchw_dataset/scene/scene_test']
     transforms:
       - DecodeImagePIL:
           img_mode: RGB
@@ -124,13 +139,19 @@ Eval:
           character_dict_path: *character_dict_path
           use_space_char: *use_space_char
           max_text_length: *max_text_length
-      - RecTVResize:
-          image_shape: [32, 128]
-          padding: False
       - KeepKeys:
           keep_keys: ['image', 'label', 'length', 'ctc_label', 'ctc_length']
+  sampler:
+    name: RatioSampler
+    scales: [[128, 32]] # w, h
+    # divide_factor: to ensure the width and height dimensions can be devided by downsampling multiple
+    first_bs: *bs
+    fix_bs: false
+    divided_factor: [4, 16] # w, h
+    is_training: False
   loader:
     shuffle: False
     drop_last: False
-    batch_size_per_card: *batch_size_per_card
-    num_workers: 12
+    batch_size_per_card: *bs
+    max_ratio: *max_ratio
+    num_workers: 4

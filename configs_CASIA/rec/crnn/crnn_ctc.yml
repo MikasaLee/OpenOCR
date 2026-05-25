@@ -1,0 +1,127 @@
+Global:
+  device: gpu
+  epoch_num: 50
+  log_smooth_window: 20
+  print_batch_step: 10
+  output_dir: ./outputs/output_ic13_hctr/resnet45_ctc_hwdb2x_real/
+  save_epoch_step: [0, 5]
+  eval_epoch_step: [0, 1]
+  eval_batch_step: [0, 200000000]
+  cal_metric_during_train: False
+  pretrained_model:
+  checkpoints:
+  use_tensorboard: false
+  infer_img:
+  character_dict_path: &character_dict_path ./tools/utils/ic13_hctr.txt
+  max_text_length: &max_text_length 60
+  use_space_char: &use_space_char False
+  save_res_path: ./outputs/output_ic13_hctr/resnet45_ctc_hwdb2x_real/predicts_ctc.txt
+  use_amp: True
+
+Optimizer:
+  name: AdamW
+  lr: 6.5e-4 # for 4gpus bs256/gpu
+  weight_decay: 0.05
+  filter_bias_and_bn: False
+
+LRScheduler:
+  name: OneCycleLR
+  warmup_epoch: 2 # pct_start 0.075*20 = 1.5ep
+  cycle_momentum: False
+
+Architecture:
+  model_type: rec
+  algorithm: CRNN
+  in_channels: 1
+  Transform:
+  Encoder:
+    name: ResNet45
+    strides: [2, 1, 2, 1, 1]
+    last_stage: True
+    trans_layer: 0
+    out_channels: 512
+  Decoder:
+    name: CTCDecoder
+
+Loss:
+  name: CTCLoss
+  zero_infinity: True
+
+PostProcess:
+  name: CTCLabelDecode
+  character_dict_path: *character_dict_path
+  use_space_char: *use_space_char
+
+Metric:
+  name: RecMetric
+  main_indicator: norm_edit_dis
+  is_filter: False
+  is_lower: False
+  ignore_space: True
+
+Train:
+  dataset:
+    name: RatioDataSetTVResizeRecursive
+    ds_width: True
+    padding: True
+    padding_rand: False
+    padding_doub: False
+    base_h: 128
+    base_shape: [
+      [128, 128], [256, 128], [384, 128], [512, 128]
+    ]
+    # IC13 real-only protocol:
+    #   real: CASIA-HWDB2.0-2.2 text-line LMDB, 52,230 samples.
+    data_dir_list: [
+      /a800data1/lirunrui/origin_datasets/bnu_zh_htr_train/CAISA-HWDB2x/
+    ]
+    ratio_list: [1.0]
+    transforms:
+      - DecodeImagePIL:
+          img_mode: Gray
+      - CTCLabelEncode:
+          character_dict_path: *character_dict_path
+          use_space_char: *use_space_char
+          max_text_length: *max_text_length
+      - KeepKeys:
+          keep_keys: ['image', 'label', 'length']
+  sampler:
+    name: RatioSampler
+    scales: [[1024, 128]]
+    first_bs: 8
+    fix_bs: false
+    divided_factor: [32, 32]
+    is_training: True
+    max_ratio: 20
+    max_bs: 8
+  loader:
+    shuffle: True
+    batch_size_per_card: 8
+    drop_last: True
+    num_workers: 8
+    pin_memory: True
+    max_ratio: 20
+
+Eval:
+  dataset:
+    name: LMDBDataSetTest
+    data_dir: /a800data1/lirunrui/lmdb_output/test/IC13Comp_line_lmdb/
+    filter_label: False
+    transforms:
+      - DecodeImagePIL:
+          img_mode: Gray
+      - RecTVResize:
+          image_shape: [128, 2560]
+          padding: True
+      - CTCLabelEncode:
+          character_dict_path: *character_dict_path
+          use_space_char: *use_space_char
+          max_text_length: *max_text_length
+      - KeepKeys:
+          keep_keys: ['image', 'label', 'length']
+  loader:
+    shuffle: False
+    drop_last: False
+    batch_size_per_card: 1
+    num_workers: 4
+    pin_memory: True

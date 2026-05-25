@@ -15,10 +15,13 @@ output/
 output_bctr/
 output_new_visualC3_textline/
 other_papers/
+eval_LLMs/
 e2e_results/
 rec_results/
 det_results/
 train_data/
+weights/
+test*
 log/
 *.DS_Store
 *.vs
